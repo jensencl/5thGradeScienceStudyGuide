@@ -1,0 +1,17 @@
+Set-Content .gitignore @"
+# Virtual Environments
+.venv/
+venv/
+ENV/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local SQLite Database (keeps daughter's progress local / cloud session isolated)
+science_tutor.db
+
+# IDE
+.idea/
+.vscode/
+"@
