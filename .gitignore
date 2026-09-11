@@ -15,3 +15,10 @@ science_tutor.db
 .idea/
 .vscode/
 "@
+
+#.streamlit
+.streamlit
+.streamlit/secrets.toml
+
+#pyproject.toml
+pyproject.toml

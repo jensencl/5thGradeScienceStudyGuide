@@ -1,183 +1,489 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "streamlit",
-#     "pandas",
-#     "matplotlib",
+#    "streamlit",
+#    "pandas",
+#    "matplotlib",
+#    "psycopg2-binary",
+#    "sqlalchemy",
 # ]
 # ///
 
+from datetime import datetime
 import io
+import math
 import random
-import sqlite3
+import re
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
+from sqlalchemy import text
 
 # ==============================================================================
-# 1. DATABASE SETUP & PERSISTENCE
+# 1. DATABASE SETUP & PERSISTENCE (NEON POSTGRESQL)
 # ==============================================================================
-DB_FILE = "science_tutor.db"
-
-
 def get_db():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return st.connection("neon", type="sql")
 
 
 def init_db():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS topic_mastery (
-                student_id INTEGER,
-                topic TEXT,
-                mastery REAL DEFAULT 0.0,
-                PRIMARY KEY (student_id, topic),
-                FOREIGN KEY (student_id) REFERENCES students (id)
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS attempt_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                student_id INTEGER,
-                topic TEXT,
-                template_id TEXT,
-                is_correct INTEGER,
-                selected_answer TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (student_id) REFERENCES students (id)
-            )
-        """)
-        cursor.execute("PRAGMA table_info(attempt_logs)")
-        if "template_id" not in [row["name"] for row in cursor.fetchall()]:
-            cursor.execute("ALTER TABLE attempt_logs ADD COLUMN template_id TEXT")
-        conn.commit()
+    schema_statements = [
+        """
+        CREATE TABLE IF NOT EXISTS students (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS topic_mastery (
+            student_id INTEGER,
+            topic TEXT,
+            mastery REAL DEFAULT 0.0,
+            PRIMARY KEY (student_id, topic)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS attempt_logs (
+            id SERIAL PRIMARY KEY,
+            student_id INTEGER,
+            topic TEXT,
+            template_id TEXT,
+            is_correct INTEGER,
+            selected_answer TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    ]
+    try:
+        conn = get_db()
+        with conn.session as s:
+            for stmt in schema_statements:
+                s.execute(text(stmt))
+            s.commit()
+    except Exception:
+        st.cache_resource.clear()
+        conn = get_db()
+        with conn.session as s:
+            for stmt in schema_statements:
+                s.execute(text(stmt))
+            s.commit()
 
 
 def list_students():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name FROM students ORDER BY name ASC")
-        return [dict(row) for row in cursor.fetchall()]
+    conn = get_db()
+    with conn.session as s:
+        result = s.execute(text("SELECT id, name FROM students ORDER BY name ASC"))
+        rows = result.fetchall()
+        return [{"id": row[0], "name": row[1]} for row in rows]
 
 
 def get_or_create_student(name: str):
     clean_name = name.strip().capitalize()
-    if not clean_name: return None
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name FROM students WHERE name = ?", (clean_name,))
-        row = cursor.fetchone()
-        if row: return dict(row)
-        cursor.execute("INSERT INTO students (name) VALUES (?)", (clean_name,))
-        conn.commit()
-        return {"id": cursor.lastrowid, "name": clean_name}
+    if not clean_name:
+        return None
+    conn = get_db()
+    with conn.session as s:
+        result = s.execute(
+            text("SELECT id, name FROM students WHERE name = :name"),
+            {"name": clean_name},
+        )
+        row = result.fetchone()
+        if row:
+            return {"id": int(row[0]), "name": row[1]}
+
+        insert_result = s.execute(
+            text("INSERT INTO students (name) VALUES (:name) RETURNING id, name"),
+            {"name": clean_name},
+        )
+        new_row = insert_result.fetchone()
+        s.commit()
+        return {"id": int(new_row[0]), "name": new_row[1]}
 
 
 def load_mastery(student_id: int, all_topics: list[str]) -> dict[str, float]:
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT topic, mastery FROM topic_mastery WHERE student_id = ?", (student_id,))
-        mastery = {row["topic"]: row["mastery"] for row in cursor.fetchall()}
+    conn = get_db()
+    mastery = {}
+    with conn.session as s:
+        result = s.execute(
+            text("SELECT topic, mastery FROM topic_mastery WHERE student_id = :sid"),
+            {"sid": student_id},
+        )
+        for row in result.fetchall():
+            mastery[row[0]] = float(row[1])
+
         for topic in all_topics:
             if topic not in mastery:
                 mastery[topic] = 0.0
-                cursor.execute("INSERT INTO topic_mastery (student_id, topic, mastery) VALUES (?, ?, 0.0)",
-                               (student_id, topic))
-        conn.commit()
-        return mastery
+                s.execute(
+                    text(
+                        "INSERT INTO topic_mastery (student_id, topic, mastery) VALUES (:sid, :top, 0.0) "
+                        "ON CONFLICT (student_id, topic) DO NOTHING"
+                    ),
+                    {"sid": student_id, "top": topic},
+                )
+        s.commit()
+    return mastery
 
 
 def reset_student_progress(student_id: int, all_topics: list[str]):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM attempt_logs WHERE student_id = ?", (student_id,))
+    conn = get_db()
+    with conn.session as s:
+        s.execute(
+            text("DELETE FROM attempt_logs WHERE student_id = :sid"),
+            {"sid": student_id},
+        )
         for topic in all_topics:
-            cursor.execute("""
-                INSERT INTO topic_mastery (student_id, topic, mastery) VALUES (?, ?, 0.0)
-                ON CONFLICT(student_id, topic) DO UPDATE SET mastery = 0.0
-            """, (student_id, topic))
-        conn.commit()
+            s.execute(
+                text(
+                    "INSERT INTO topic_mastery (student_id, topic, mastery) VALUES (:sid, :top, 0.0) "
+                    "ON CONFLICT (student_id, topic) DO UPDATE SET mastery = 0.0"
+                ),
+                {"sid": student_id, "top": topic},
+            )
+        s.commit()
 
 
-def record_attempt(student_id: int, topic: str, template_id: str, is_correct: bool, selected_answer: str,
-                   new_mastery: float):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO attempt_logs (student_id, topic, template_id, is_correct, selected_answer)
-            VALUES (?, ?, ?, ?, ?)
-        """, (student_id, topic, template_id, 1 if is_correct else 0, selected_answer))
-        cursor.execute("""
-            INSERT INTO topic_mastery (student_id, topic, mastery) VALUES (?, ?, ?)
-            ON CONFLICT(student_id, topic) DO UPDATE SET mastery = excluded.mastery
-        """, (student_id, topic, new_mastery))
-        conn.commit()
+def record_attempt(
+    student_id: int,
+    topic: str,
+    template_id: str,
+    is_correct: bool,
+    selected_answer: str,
+    new_mastery: float,
+):
+    conn = get_db()
+    with conn.session as s:
+        s.execute(
+            text("""
+                INSERT INTO attempt_logs (student_id, topic, template_id, is_correct, selected_answer)
+                VALUES (:sid, :top, :tid, :corr, :ans)
+            """),
+            {
+                "sid": student_id,
+                "top": topic,
+                "tid": template_id,
+                "corr": 1 if is_correct else 0,
+                "ans": selected_answer,
+            },
+        )
+        s.execute(
+            text("""
+                INSERT INTO topic_mastery (student_id, topic, mastery) VALUES (:sid, :top, :mast)
+                ON CONFLICT (student_id, topic) DO UPDATE SET mastery = :mast
+            """),
+            {"sid": student_id, "top": topic, "mast": new_mastery},
+        )
+        s.commit()
 
 
 # ==============================================================================
-# 2. IN-MEMORY VISUAL DIAGRAM GENERATORS
+# 2. TEACHER INSTRUCTION REPOSITORY: SAVVAS 5TH GRADE SCIENCE
 # ==============================================================================
-def render_cylinder(ax, x_offset, volume, max_vol, label, fill_color="#7b8d9e"):
-    cyl_w, cyl_h, fill_pct = 1.6, 5.5, volume / max_vol
-    ax.add_patch(patches.Ellipse((x_offset + cyl_w / 2, 0.2), width=cyl_w + 1.1, height=0.45, facecolor="#e0e0e0",
-                                 edgecolor="#222", lw=2))
-    liquid_height = (cyl_h - 0.5) * fill_pct
-    ax.add_patch(patches.Rectangle((x_offset, 0.2), cyl_w, liquid_height, facecolor=fill_color, edgecolor="none"))
-    ax.add_patch(patches.Rectangle((x_offset, 0.2), cyl_w, cyl_h, facecolor="none", edgecolor="#222", lw=2.5))
-    if fill_pct > 0:
+MINI_LESSONS = {
+    "Properties of Matter": {
+        "title": "Properties of Matter Foundations",
+        "concept": """
+### 👩‍🏫 Unit 1: What Is Matter & How Do We Measure It?
+* **Matter**: Anything that has mass and takes up volume.
+* **Mass vs. Weight**: Mass is measured in grams using a **pan balance**. Weight is the force of gravity measured with a **spring scale**.
+* **Volume**: The space occupied by matter (measured in mL using a graduated cylinder or $\text{cm}^3$ using a ruler).
+* **States of Matter**:
+  * **Solid**: Rigid, fixed vibrating particles; definite shape and volume.
+  * **Liquid**: Particles remain in contact but slide past one another; definite volume, takes the container's shape.
+  * **Gas**: High-energy particles spread far apart to fill any container; has real mass.
+* **Density**: $\text{Density} = \frac{\text{Mass}}{\text{Volume}}$. Pure water is $1.0\text{ g/mL}$. Substances with density $> 1.0$ sink; $< 1.0$ float.
+* **Conductivity & Magnetism**: Conductors (copper, iron, aluminum) easily transfer electricity or thermal energy. Insulators (rubber, plastic, wood) resist transfer. Only iron, nickel, and cobalt are magnetic.
+""",
+        "example": """
+* **Density Tower Layering**:
+  * Rubbing Alcohol ($0.79\text{ g/mL}$) floats on top.
+  * Fresh Water ($1.00\text{ g/mL}$) sits in the middle.
+  * Corn Syrup ($1.38\text{ g/mL}$) sinks to the bottom.
+""",
+        "trap": "Don't assume all metals are magnetic! Copper, aluminum, gold, and brass do NOT stick to magnets.",
+    },
+    "Changes in Matter": {
+        "title": "Physical vs. Chemical Changes & Conservation of Mass",
+        "concept": """
+### 👩‍🏫 Unit 2: Changes in Matter
+* **Physical Change**: Changes shape, size, or state of matter without creating a new chemical substance (e.g., melting ice, dissolving sugar, tearing paper). These are generally reversible.
+* **Chemical Change**: Reactants rearrange chemically into brand-new substances with new properties (e.g., rusting, baking, burning, vinegar + baking soda).
+* **Signs of a Chemical Reaction**:
+  1. Spontaneous gas bubble formation without boiling.
+  2. Precipitate formation (insoluble solid appearing from two clear liquids).
+  3. Unexpected color shift.
+  4. Temperature changes without external heat (exothermic releases heat; endothermic absorbs heat).
+* **Law of Conservation of Mass**: Matter is never created or destroyed. In closed systems, initial mass equals final mass.
+""",
+        "example": """
+* **Conservation in a Sealed Flask**:
+  * Empty flask & balloon: $60\text{ g}$
+  * Vinegar: $75\text{ g}$
+  * Baking soda: $15\text{ g}$
+  * Total mass before reaction $= 60 + 75 + 15 = 150\text{ g}$.
+  * Total mass after reaction (sealed) $= \mathbf{150\text{ g}}$.
+""",
+        "trap": "In an open container, gas produced escapes into the surrounding air. The mass appears to decrease on the scale, but the atoms were not destroyed!",
+    },
+    "Earth's Systems": {
+        "title": "Earth's Four Interacting Spheres",
+        "concept": """
+### 👩‍🏫 Earth's Spheres
+* **Geosphere**: Solid rock, minerals, soil, mountains, and continental crust.
+* **Hydrosphere**: All liquid and frozen water (oceans, lakes, rivers, groundwater).
+* **Atmosphere**: Blanket of air and weather gases surrounding the planet.
+* **Biosphere**: All living organisms (plants, animals, fungi, bacteria).
+""",
+        "example": "A rushing river (Hydrosphere) slowly carves a deep rock canyon (Geosphere).",
+        "trap": "Clouds are liquid water droplets or ice crystals suspended in air—they belong to the Hydrosphere interacting with the Atmosphere.",
+    },
+    "Earth's Water": {
+        "title": "Earth's Global Water Distribution",
+        "concept": """
+### 👩‍🏫 Water Reservoir Breakdown
+* **97% Saltwater**: Found in oceans and seas.
+* **3% Freshwater**:
+  * **~68–69%** locked up in solid glaciers and polar ice caps.
+  * **~30%** stored in underground aquifers.
+  * **Less than 1%** accessible surface water in lakes, rivers, and the atmosphere.
+""",
+        "example": "Over two-thirds of all freshwater on Earth is unavailable as drinking water because it is frozen in ice caps.",
+        "trap": "Rivers and lakes make up less than 1% of total freshwater, not the majority!",
+    },
+    "Patterns in Space": {
+        "title": "Earth Cycles, Sun Angles, and Star Brightness",
+        "concept": """
+### 👩‍🏫 Celestial Patterns
+* **Earth's Rotation (24 hours)**: Causes day and night and the apparent motion of the Sun. Lower Sun angles in early morning/late afternoon cast long shadows; midday Sun casts the shortest shadows.
+* **Earth's Revolution (365.25 days)**: Causes different constellations to appear during different seasons.
+* **Apparent Star Brightness**: A star's brightness to observers on Earth depends on both its actual energy output and its distance from Earth.
+""",
+        "example": "A nearby dim star can appear brighter in our night sky than a distant supergiant star.",
+        "trap": "Shadows do not change size because the Sun gets closer; they change because Earth's rotation alters the angle of incoming sunlight.",
+    },
+    "Matter & Energy in Ecosystems": {
+        "title": "Energy Flow & Nutrient Cycling",
+        "concept": """
+### 👩‍🏫 Living Systems
+* **Producers**: Plants capture solar energy and use carbon dioxide and water to produce glucose during photosynthesis.
+* **Consumers**: Animals that eat plants or other animals for energy.
+* **Decomposers**: Fungi and bacteria that break down dead matter, returning nutrients to the soil.
+* **Plant Mass Source**: Trees gain their dry mass from carbon dioxide gas absorbed from the air, not from consuming soil.
+""",
+        "example": "Sunlight $\\rightarrow$ Kelp (Producer) $\\rightarrow$ Sea Urchin (Consumer) $\\rightarrow$ Sea Otter (Apex Predator).",
+        "trap": "Soil provides minerals and water, but the structural carbon atoms making up plant wood come from the air!",
+    },
+}
+
+# ==============================================================================
+# 3. 2D & 3D IN-MEMORY DIAGRAM GENERATORS
+# ==============================================================================
+def render_cylinder(ax, x_offset, volume, max_vol, label):
+    cyl_w, cyl_h = 1.6, 5.5
+    pct = volume / max_vol
+    ax.add_patch(
+        patches.Ellipse(
+            (x_offset + cyl_w / 2, 0.2),
+            cyl_w + 1.1,
+            0.45,
+            facecolor="#e0e0e0",
+            edgecolor="#222",
+            lw=2,
+        )
+    )
+    ax.add_patch(
+        patches.Rectangle(
+            (x_offset, 0.2),
+            cyl_w,
+            (cyl_h - 0.5) * pct,
+            facecolor="#7b8d9e",
+        )
+    )
+    ax.add_patch(
+        patches.Rectangle(
+            (x_offset, 0.2),
+            cyl_w,
+            cyl_h,
+            facecolor="none",
+            edgecolor="#222",
+            lw=2.5,
+        )
+    )
+    if pct > 0:
         ax.add_patch(
-            patches.Ellipse((x_offset + cyl_w / 2, 0.2 + liquid_height), width=cyl_w, height=0.25, facecolor="#5f7182",
-                            edgecolor="#222", lw=1.5))
-    ax.add_patch(patches.Ellipse((x_offset + cyl_w / 2, 0.2 + cyl_h), width=cyl_w, height=0.25, facecolor="none",
-                                 edgecolor="#222", lw=2))
+            patches.Ellipse(
+                (x_offset + cyl_w / 2, 0.2 + (cyl_h - 0.5) * pct),
+                cyl_w,
+                0.25,
+                facecolor="#5f7182",
+                edgecolor="#222",
+                lw=1.5,
+            )
+        )
+    ax.add_patch(
+        patches.Ellipse(
+            (x_offset + cyl_w / 2, 0.2 + cyl_h),
+            cyl_w,
+            0.25,
+            facecolor="none",
+            edgecolor="#222",
+            lw=2,
+        )
+    )
     for i in range(1, 6):
-        tick_y = 0.2 + (cyl_h - 0.5) * (i / 5.0)
-        ax.plot([x_offset, x_offset + 0.35], [tick_y, tick_y], color="#222", lw=1.5)
-        ax.text(x_offset + 0.45, tick_y - 0.1, f"{int((max_vol / 5) * i)}", fontsize=8, weight="bold", color="#333")
-    ax.text(x_offset + cyl_w / 2, -0.7, label, ha="center", va="center", fontsize=16, weight="bold")
+        y = 0.2 + (cyl_h - 0.5) * (i / 5.0)
+        ax.plot([x_offset, x_offset + 0.35], [y, y], color="#222", lw=1.5)
+        ax.text(
+            offset := x_offset + 0.45,
+            y - 0.1,
+            f"{int((max_vol / 5) * i)}",
+            fontsize=8,
+            weight="bold",
+        )
+    ax.text(
+        x_offset + cyl_w / 2,
+        -0.7,
+        label,
+        ha="center",
+        weight="bold",
+        fontsize=14,
+    )
 
 
 def generate_diagram(diagram_type: str, params: dict) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(6.5, 3.8), dpi=130)
+
     if diagram_type == "graduated_cylinders":
-        render_cylinder(ax, 1.5, params["vol_a"], params["max_vol"], f"Sample {params['label_a']}")
-        render_cylinder(ax, 5.2, params["vol_b"], params["max_vol"], f"Sample {params['label_b']}")
+        render_cylinder(ax, 1.5, params["vol_a"], params["max_vol"], params["label_a"])
+        render_cylinder(ax, 5.2, params["vol_b"], params["max_vol"], params["label_b"])
         ax.set(xlim=(0, 8.5), ylim=(-1.2, 6.5))
+
+    elif diagram_type == "density_column":
+        ax.add_patch(
+            patches.Rectangle((2.5, 0.5), 3.0, 5.0, facecolor="none", edgecolor="#222", lw=3)
+        )
+        colors = ["#f39c12", "#3498db", "#27ae60"]
+        labels = params.get(
+            "layers", ["Top (0.8 g/mL)", "Middle (1.0 g/mL)", "Bottom (1.3 g/mL)"]
+        )
+        for i in range(3):
+            ax.add_patch(
+                patches.Rectangle(
+                    (2.5, 0.5 + i * 1.6),
+                    3.0,
+                    1.6,
+                    facecolor=colors[i],
+                    alpha=0.6,
+                    edgecolor="#333",
+                )
+            )
+            ax.text(
+                4.0,
+                1.3 + i * 1.6,
+                labels[i],
+                ha="center",
+                weight="bold",
+                fontsize=11,
+            )
+        ax.set(xlim=(1, 8), ylim=(0, 6.5))
+
     elif diagram_type == "flask_balloon":
         ax.add_patch(
-            patches.Polygon([[3.5, 0.5], [6.5, 0.5], [5.5, 3.2], [5.5, 4.0], [4.5, 4.0], [4.5, 3.2]], closed=True,
-                            facecolor="#eef2f7", edgecolor="#222", lw=2.5))
+            patches.Polygon(
+                [[3.5, 0.5], [6.5, 0.5], [5.5, 3.2], [5.5, 4.0], [4.5, 4.0], [4.5, 3.2]],
+                closed=True,
+                facecolor="#eef2f7",
+                edgecolor="#222",
+                lw=2.5,
+            )
+        )
         ax.add_patch(
-            patches.Polygon([[3.8, 0.5], [6.2, 0.5], [5.8, 1.8], [4.2, 1.8]], closed=True, facecolor="#a0c4ff"))
+            patches.Polygon(
+                [[3.8, 0.5], [6.2, 0.5], [5.8, 1.8], [4.2, 1.8]],
+                closed=True,
+                facecolor="#a0c4ff",
+            )
+        )
         if params.get("expanded", True):
             ax.add_patch(
-                patches.Ellipse((5.0, 5.0), width=2.4, height=2.2, facecolor="#ff6b6b", edgecolor="#c92a2a", lw=2))
-            ax.text(5.0, 5.0, "Gas", ha="center", va="center", color="white", weight="bold")
+                patches.Ellipse(
+                    (5.0, 5.0),
+                    width=2.4,
+                    height=2.2,
+                    facecolor="#ff6b6b",
+                    edgecolor="#c92a2a",
+                    lw=2,
+                )
+            )
+            ax.text(
+                5.0,
+                5.0,
+                "Gas Trapped",
+                ha="center",
+                va="center",
+                color="white",
+                weight="bold",
+            )
         else:
             ax.add_patch(
-                patches.Ellipse((5.0, 4.3), width=0.8, height=0.6, facecolor="#ff6b6b", edgecolor="#c92a2a", lw=2))
-        ax.text(5.0, -0.2, f"Total Mass = {params['total_mass']} g", ha="center", weight="bold", fontsize=12)
+                patches.Ellipse(
+                    (5.0, 4.3),
+                    width=0.8,
+                    height=0.6,
+                    facecolor="#ff6b6b",
+                    edgecolor="#c92a2a",
+                    lw=2,
+                )
+            )
+        ax.text(
+            5.0,
+            -0.2,
+            f"Total Mass = {params['total_mass']} g",
+            ha="center",
+            weight="bold",
+            fontsize=12,
+        )
         ax.set(xlim=(1, 9), ylim=(-0.8, 6.5))
+
+    elif diagram_type == "pan_balance":
+        ax.plot([2, 8], [2.5, 2.5], color="#333", lw=4)
+        ax.add_patch(
+            patches.Polygon(
+                [[4.5, 0.5], [5.5, 0.5], [5.0, 2.5]],
+                closed=True,
+                facecolor="#7f8c8d",
+            )
+        )
+        ax.plot([3, 3], [1.5, 2.5], color="#555", lw=2)
+        ax.plot([2.2, 3.8], [1.5, 1.5], color="#222", lw=3)
+        ax.text(3, 1.8, params.get("left_label", "Object A"), ha="center", weight="bold")
+        ax.plot([7, 7], [1.5, 2.5], color="#555", lw=2)
+        ax.plot([6.2, 7.8], [1.5, 1.5], color="#222", lw=3)
+        ax.text(7, 1.8, params.get("right_label", "Object B"), ha="center", weight="bold")
+        ax.set(xlim=(1, 9), ylim=(0, 3.5))
+
     elif diagram_type == "shadow_diagram":
-        sun_x, sun_y, pole_x, pole_h = params["sun_x"], params["sun_y"], 5.0, 3.5
+        sun_x, sun_y = params["sun_x"], params["sun_y"]
+        pole_x, pole_h = 5.0, 3.5
         ax.plot([0, 10], [0, 0], color="#333", lw=3)
         ax.plot([pole_x, pole_x], [0, pole_h], color="#444", lw=4)
-        ax.plot([pole_x, max(0.5, min(9.5, pole_x - (pole_h / ((pole_h - sun_y) / (pole_x - sun_x)))))], [0, 0],
-                color="#666", lw=7, solid_capstyle="round")
+        ax.text(pole_x, -0.4, "Flagpole", ha="center", weight="bold", fontsize=10)
+        slope = (pole_h - sun_y) / (pole_x - sun_x)
+        shadow_tip_x = max(0.5, min(9.5, pole_x - (pole_h / slope)))
+        ax.plot([pole_x, shadow_tip_x], [0, 0], color="#666", lw=7, solid_capstyle="round")
         ax.scatter([sun_x], [sun_y], color="#f39c12", s=450, zorder=5)
-        ax.text(sun_x, sun_y + 0.6, f"Sun ({params['time_label']})", ha="center", weight="bold", fontsize=10)
+        ax.text(
+            sun_x,
+            sun_y + 0.6,
+            f"Sun ({params['time_label']})",
+            ha="center",
+            weight="bold",
+            fontsize=10,
+        )
         ax.set(xlim=(0, 10), ylim=(-0.8, 6.5))
+
     ax.axis("off")
     buf = io.BytesIO()
     plt.tight_layout()
@@ -190,472 +496,1056 @@ def generate_diagram(diagram_type: str, params: dict) -> io.BytesIO:
 def helper_shuffle_options(correct_text, distractor_texts):
     opts = [correct_text] + distractor_texts
     random.shuffle(opts)
-    labeled_opts = [f"{['A', 'B', 'C', 'D'][i]}. {opt}" for i, opt in enumerate(opts)]
-    return labeled_opts, labeled_opts[opts.index(correct_text)]
+    letters = ["A", "B", "C", "D"]
+    labeled = [f"{letters[i]}. {opt}" for i, opt in enumerate(opts)]
+    return labeled, labeled[opts.index(correct_text)]
+
+
+def clean_text_string(s: str) -> str:
+    s = str(s).strip().lower().replace(",", "")
+    s = re.sub(r"\b(grams?|g|milliliters?|ml|cubic\s+units?|units?)\b", "", s)
+    return s.strip()
+
+
+def check_user_answer(user_input, q: dict) -> bool:
+    input_type = q.get("input_type", "radio")
+    if input_type == "radio":
+        return user_input == q["answer"]
+
+    if input_type == "multiselect":
+        return set(q.get("correct_answers", [])) == set(
+            user_input if isinstance(user_input, list) else []
+        )
+
+    if input_type == "multi_text":
+        if not isinstance(user_input, dict):
+            return False
+        for k, acc_list in q.get("accepted_answers_dict", {}).items():
+            val = clean_text_string(user_input.get(k, ""))
+            acc_cleaned = [clean_text_string(a) for a in acc_list]
+            if val not in acc_cleaned:
+                return False
+        return True
+
+    cleaned_user = clean_text_string(user_input)
+    accepted = [clean_text_string(ans) for ans in q.get("accepted_answers", [])]
+    return cleaned_user in accepted
 
 
 # ==============================================================================
-# 3. PROCEDURAL QUESTION GENERATORS
+# 4. UNIT 1: PROPERTIES OF MATTER GENERATORS
 # ==============================================================================
+def u1_measuring_tools():
+    tools = [
+        (
+            "pan balance",
+            "mass in grams",
+            "graduated cylinder",
+            "liquid volume in milliliters",
+        ),
+        (
+            "graduated cylinder",
+            "volume in milliliters",
+            "spring scale",
+            "weight in newtons",
+        ),
+        (
+            "metric ruler",
+            "solid volume in cubic centimeters",
+            "thermometer",
+            "temperature in degrees Celsius",
+        ),
+    ]
+    pick = random.choice(tools)
+    t_tool, t_prop, w_tool, w_prop = pick
+    correct = f"A {t_tool}, because it is the scientific tool designed to measure {t_prop}."
+    distractors = [
+        f"A {w_tool}, because it is the standard tool designed to measure {t_prop}.",
+        f"A {t_tool}, because its primary purpose is measuring {w_prop}.",
+        "A magnifying glass, because it allows direct counting of microscopic particles.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_measuring_tools",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student plans an experiment and needs to record the exact {t_prop.split(' in ')[0]} of a mineral sample.",
+        "question": "Which tool must the student select, and what scientific reason supports this choice?",
+        "hint": "Think about which tool measures grams on a balance pan versus liquid volume in a cylinder.",
+        "answer": ans,
+        "explanation": f"A {t_tool} is used to measure {t_prop}.",
+    }
 
-# --- Category A: Changes in Matter (10 Specialized Generators) ---
-def gen_closed_balloon_system():
-    student, v, b, f = random.choice(["Maya", "Liam", "Ava"]), random.randint(70, 120), random.randint(10,
-                                                                                                       25), random.randint(
-        60, 95)
+
+def u1_thermal_conductivity():
+    materials = [
+        (
+            "wooden spoon",
+            "thermal insulator",
+            "wood does not easily permit thermal energy to travel through it",
+        ),
+        (
+            "metal spoon",
+            "thermal conductor",
+            "metals allow thermal energy to transfer through them very quickly",
+        ),
+        (
+            "silicone spatula",
+            "thermal insulator",
+            "silicone resists the flow of heat energy and keeps the handle cool",
+        ),
+    ]
+    name, role, reason = random.choice(materials)
+    soup_temp = random.randint(75, 90)
+    correct = f"{name.capitalize()} is a {role}, because {reason}."
+    other_role = (
+        "thermal conductor" if role == "thermal insulator" else "thermal insulator"
+    )
+    distractors = [
+        f"{name.capitalize()} is a {other_role}, because it easily dissolves into warm liquids over time.",
+        f"{name.capitalize()} is a magnetic material, which completely blocks heat from entering the handle.",
+        f"{name.capitalize()} is a {role}, because it immediately transforms into a gas when heated.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_thermal_cond",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student leaves a {name} resting inside a pot of hot vegetable soup at {soup_temp}°C for 15 minutes.",
+        "question": f"When touching the handle, which statement correctly explains how thermal energy behaves in the {name}?",
+        "hint": "Does heat flow easily through this material to make it hot (conductor), or does it resist heat (insulator)?",
+        "answer": ans,
+        "explanation": f"{name.capitalize()} is classified as a {role} because {reason}.",
+    }
+
+
+def u1_density_sink_float():
+    obj = random.choice([
+        (
+            "solid oak wood block",
+            0.75,
+            "floats near the water surface",
+            "its density is less than 1.0 g/mL",
+        ),
+        (
+            "pure lead sinker",
+            11.34,
+            "sinks rapidly to the bottom",
+            "its density is much greater than 1.0 g/mL",
+        ),
+        (
+            "paraffin wax cube",
+            0.90,
+            "floats mostly submerged",
+            "its density is slightly less than 1.0 g/mL",
+        ),
+        (
+            "glass marble",
+            2.50,
+            "sinks directly to the bottom",
+            "its density is greater than 1.0 g/mL",
+        ),
+    ])
+    name, density, behavior, reason = obj
+    correct = f"It {behavior} because {reason}."
+    distractors = [
+        f"It {'sinks to the bottom' if 'float' in behavior else 'floats near the surface'} because heavy objects always sink regardless of density.",
+        "It dissolves completely because water quickly breaks down every solid material.",
+        f"It floats near the water surface because water has an identical density of {density} g/mL.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_density_sink_float",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"Fresh water has a density of exactly 1.0 g/mL. A student places a {name} with a density of {density} g/cm³ into water.",
+        "question": f"What will happen to the {name}, and which reason explains this result?",
+        "hint": "Compare the object's density to 1.0 g/mL. Numbers below 1.0 float; numbers above 1.0 sink.",
+        "answer": ans,
+        "explanation": f"Water density is 1.0 g/cm³. {name.capitalize()} has a density of {density} g/cm³, so {reason}.",
+    }
+
+
+def u1_density_column_visual():
+    correct = "Corn syrup settles on the bottom due to highest density, while alcohol floats on top with lowest density."
+    distractors = [
+        "Corn syrup settles on the bottom because it was poured into the cylinder first.",
+        "Rubbing alcohol floats on top because all liquids with high density rise to the surface.",
+        "Water pushes the syrup to the bottom because water exerts a magnetic downward force on sugar.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_density_column",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "density_column",
+        "diagram_params": {"layers": ["Top: Alcohol", "Middle: Water", "Bottom: Syrup"]},
+        "scenario": "A student layers equal volumes of rubbing alcohol, colored water, and corn syrup in a cylinder.",
+        "question": "Which scientific principle explains why these liquids remain separated in these distinct layers?",
+        "hint": "Liquids stack based on density: densest on the bottom, least dense on top.",
+        "answer": ans,
+        "explanation": "Liquids layer by density. The densest liquid sinks to the bottom, and the least dense liquid floats on top.",
+    }
+
+
+def u1_magnetism_metals():
+    items = [
+        ("iron nail", "steel paperclip", "copper wire", "aluminum foil strip"),
+        ("cobalt pin", "nickel washer", "plastic button", "rubber band"),
+    ]
+    mag1, mag2, non1, non2 = random.choice(items)
+    correct = f"{mag1.capitalize()} and {mag2}, because they are made of magnetic metals (iron, nickel, or cobalt)."
+    distractors = [
+        f"{non1.capitalize()} and {non2}, because every metallic object is naturally attracted to magnets.",
+        "All four listed items, because magnetic fields attract all solid materials equally.",
+        "None of the items, because magnets only attract objects carrying live electrical current.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_magnetism",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student tests four objects with a bar magnet: a {mag1}, a {mag2}, a {non1}, and a {non2}.",
+        "question": "Which items will stick to the magnet?",
+        "hint": "Only iron, nickel, cobalt, and steel are magnetic. Copper and aluminum are not magnetic!",
+        "answer": ans,
+        "explanation": "Only ferromagnetic metals (iron, nickel, cobalt, and steel) are attracted to magnets.",
+    }
+
+
+def u1_solubility_saturation():
+    solute = random.choice(["table salt", "cane sugar", "potassium chloride"])
+    max_g = random.choice([35, 40])
+    added_g = max_g + 15
+    correct = f"Solid {solute} ({added_g - max_g} g) will sit on the bottom because the solution reached its saturation point."
+    distractors = [
+        f"All {added_g} grams will dissolve completely because liquids can hold an infinite amount of solute.",
+        "The water will instantly freeze solid because dissolving solute absorbs all heat energy.",
+        f"The extra {added_g - max_g} grams of {solute} will transform directly into carbon dioxide gas.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_solubility",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"At room temperature, exactly {max_g} g of {solute} can dissolve in 100 mL of water before saturation. A student adds {added_g} g of {solute} to 100 mL of water and stirs.",
+        "question": "What will the student observe after stirring?",
+        "hint": "Once a solution is saturated, it cannot dissolve any more solute. What happens to the extra solid?",
+        "answer": ans,
+        "explanation": f"At saturation ({max_g} g), no more solute can dissolve. The extra {added_g - max_g} g settles at the bottom.",
+    }
+
+
+def u1_particle_state_spacing():
+    states = [
+        (
+            "solid ice cube",
+            "packed tightly in fixed, vibrating positions with a definite shape and volume",
+        ),
+        (
+            "liquid water",
+            "in close contact but able to slide freely past one another, taking the shape of the container",
+        ),
+        (
+            "water vapor gas",
+            "spaced very far apart and moving rapidly in all directions to fill any container",
+        ),
+    ]
+    pick = random.choice(states)
+    name, desc = pick
+    other1 = states[(states.index(pick) + 1) % 3][1]
+    other2 = states[(states.index(pick) + 2) % 3][1]
+    correct = f"Particles are {desc}."
+    distractors = [
+        f"Particles are {other1}.",
+        f"Particles are {other2}.",
+        "Particles have broken down completely into individual protons and ceased movement.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_particles",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student views a microscopic animation of molecules in a sample of {name}.",
+        "question": f"Which statement accurately describes the arrangement and motion of the particles in the {name}?",
+        "hint": "Solids vibrate in fixed spots, liquids slide around each other, and gases fly far apart.",
+        "answer": ans,
+        "explanation": f"In a {name}, particles are {desc}.",
+    }
+
+
+def u1_gas_has_mass():
+    deflated = random.randint(3, 4)
+    inflated = deflated + 2
+    correct = f"Air has mass (the added air weighed {inflated - deflated} g), proving that gases are made of matter."
+    distractors = [
+        "Air has zero mass; the scale showed more weight because stretching rubber creates new atoms.",
+        "The inflated balloon weighed more because warm room air exerts magnetic pressure on scales.",
+        "Gases have measurable volume, but science proves they never possess any measurable mass.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_gas_mass",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student measures a deflated balloon ({deflated}.0 g). She pumps air into it and seals it; the scale now reads {inflated}.0 g.",
+        "question": "What fundamental science concept does this experiment prove?",
+        "hint": "Matter has mass and takes up space. Did adding invisible gas make the balloon heavier?",
+        "answer": ans,
+        "explanation": "Air is a gas, and gas is matter. Pumping air inside adds mass, proving gas has mass.",
+    }
+
+
+def u1_graduated_cylinder_volume():
+    v1 = random.choice([15, 20])
+    v2 = random.choice([35, 40])
+    diff = v2 - v1
+    correct = f"Sample Y has a volume of {v2} mL, which is {diff} mL greater than Sample X ({v1} mL)."
+    distractors = [
+        f"Sample X has a volume of {v1} mL, which is {diff} mL greater than Sample Y ({v2} mL).",
+        "Both samples have identical volumes because both graduated cylinders reach the 50 mL line.",
+        "Volume cannot be determined from graduated cylinders without knowing each liquid's mass.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_cyl_vol",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "graduated_cylinders",
+        "diagram_params": {
+            "vol_a": v1,
+            "vol_b": v2,
+            "max_vol": 50,
+            "label_a": "X",
+            "label_b": "Y",
+        },
+        "scenario": "A student measures liquid samples X and Y in graduated cylinders.",
+        "question": "What do the graduated cylinder readings show about the volumes of Sample X and Sample Y?",
+        "hint": "Read the number right at the liquid meniscus line for cylinder X and cylinder Y, then subtract.",
+        "answer": ans,
+        "explanation": f"Sample X reads {v1} mL and Sample Y reads {v2} mL. The difference is {diff} mL.",
+    }
+
+
+def u1_pan_balance_comparison():
+    correct = "Object B has greater mass than Object A, causing its side of the balance beam to tip downward."
+    distractors = [
+        "Object A has greater mass than Object B, causing its side of the balance beam to rise upward.",
+        "Both objects have identical mass because both objects are resting on the same balance.",
+        "The pan balance measures volume, so Object B must take up more space than Object A.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_pan_bal",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "pan_balance",
+        "diagram_params": {"left_label": "A (50g)", "right_label": "B (75g)"},
+        "scenario": "A student places Object A (50 g) and Object B (75 g) on opposite pans of an equal-arm balance.",
+        "question": "What happens to the balance beam, and what does it reveal about the two objects?",
+        "hint": "Gravity pulls harder on heavier objects. Which side tips down?",
+        "answer": ans,
+        "explanation": "A pan balance compares mass. The pan holding the heavier mass (Object B) tips downward.",
+    }
+
+
+def u1_electrical_conductors_insulators():
+    setups = [
+        ("copper wire", "lightbulb glows brightly", "electrical conductor"),
+        ("rubber eraser", "lightbulb stays dark", "electrical insulator"),
+    ]
+    item, bulb, cat = random.choice(setups)
+    correct = f"The {item} is an {cat} because it {'allows electric current to flow through the circuit' if 'conductor' in cat else 'blocks electric current from flowing'}."
+    other_cat = (
+        "electrical insulator" if "conductor" in cat else "electrical conductor"
+    )
+    distractors = [
+        f"The {item} is an {other_cat} because it completely reverses the voltage of the battery.",
+        f"The {item} dissolved in the electric wires and permanently altered the battery terminals.",
+        "All solid materials allow electric current to pass through them with equal efficiency.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_elec_cond",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student tests a {item} in an electric circuit with a battery and bulb. The {bulb}.",
+        "question": f"How should the student classify the {item}?",
+        "hint": "Did the bulb turn on? If yes, electricity flows through it (conductor). If not, it blocks it (insulator).",
+        "answer": ans,
+        "explanation": "Materials that allow current to flow are conductors; materials that block current are insulators.",
+    }
+
+
+def u1_identifying_unknown_substance():
+    table = {
+        "Property": ["Color / State", "Hardness", "Solubility in Water", "Magnetism"],
+        "Result": ["White solid crystals", "Soft", "Dissolves completely", "Not attracted"],
+    }
+    correct = "Table salt or sugar, because both are soluble, non-magnetic white crystalline solids."
+    distractors = [
+        "Iron filings, because iron dissolves rapidly in water and forms clear liquid solutions.",
+        "Chalk powder, because chalk crystals dissolve completely in room-temperature water.",
+        "Copper wire clippings, because copper is a white crystalline solid that dissolves in water.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_unknown_sub",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "table": table,
+        "scenario": "A student records physical property tests for an unknown white powder found in the lab.",
+        "question": "Which substance could this mystery sample be based on the recorded data?",
+        "hint": "Which choice is white, crystalline, and dissolves in water without sticking to a magnet?",
+        "answer": ans,
+        "explanation": "Table salt and sugar match all observed properties: white crystals, soluble in water, non-magnetic.",
+    }
+
+
+# ==============================================================================
+# 5. UNIT 2: CHANGES IN MATTER GENERATORS (VERIFIED ARITHMETIC)
+# ==============================================================================
+def u2_conservation_dissolving():
+    water_g = random.randint(120, 200)
+    sugar_g = random.randint(15, 35)
+    total = water_g + sugar_g
+
+    opts, ans = helper_shuffle_options(
+        f"Exactly {total} grams, because the dissolved sugar molecules still exist inside the solution.",
+        [
+            f"{water_g} grams, because the solid sugar was destroyed when it dissolved into clear liquid.",
+            f"{total + 10} grams, because stirring liquid vigorously adds atmospheric weight to the cup.",
+            f"{sugar_g} grams, because the water evaporated immediately as soon as sugar touched it.",
+        ],
+    )
+    return {
+        "template_id": "u2_dissolving",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": (
+            f"A student places an empty cup on a scale, tares it to 0 g, and adds {water_g} g of warm water. "
+            f"She then adds {sugar_g} g of dry sugar crystals. The display confirms the starting contents "
+            f"equal {total} g ({water_g}g + {sugar_g}g). She stirs until every crystal dissolves completely."
+        ),
+        "question": "What is the total mass of the clear sugar-water solution on the scale?",
+        "hint": f"Add the parts together: {water_g} g water + {sugar_g} g sugar. Dissolving does not destroy mass!",
+        "answer": ans,
+        "explanation": f"Conservation of mass: {water_g} g water + {sugar_g} g sugar = {total} g total solution.",
+    }
+
+
+def u2_conservation_melting():
+    ice_g = random.randint(40, 80)
+    flask_g = random.randint(90, 120)
+    total = ice_g + flask_g
+
+    opts, ans = helper_shuffle_options(
+        f"Exactly {total} grams, because changing states of matter does not alter the amount of matter.",
+        [
+            f"{total - 10} grams, because liquid water is denser than ice and therefore loses weight on scales.",
+            f"{total + 15} grams, because thermal energy absorbed from sunlight adds measurable mass to liquids.",
+            f"{flask_g} grams, because all the solid ice molecules were destroyed during phase transition.",
+        ],
+    )
+    return {
+        "template_id": "u2_melting",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": (
+            f"A student places {ice_g} g of ice inside an empty glass flask ({flask_g} g) and inserts a rubber stopper. "
+            f"The digital scale displays a starting mass of {total} g ({flask_g}g flask + {ice_g}g ice). "
+            f"She leaves the flask in the sun until all the ice melts completely into liquid water."
+        ),
+        "question": "What will the scale read after the ice has melted inside the sealed flask?",
+        "hint": f"The flask remained sealed! Add {flask_g} g (flask) + {ice_g} g (melted water). Does phase change destroy mass?",
+        "answer": ans,
+        "explanation": f"Melting is a physical state change in a closed system. Mass remains identical at {total} g ({flask_g}g + {ice_g}g).",
+    }
+
+
+def u2_closed_balloon_gas():
+    v = random.randint(60, 90)
+    b = random.randint(10, 20)
+    f = random.choice([50, 60, 75])
     total = v + b + f
-    options, ans = helper_shuffle_options(
-        f"Exactly {total} grams, because the balloon prevents gas from escaping.",
-        [f"Less than {total} grams, because gases produced have no mass.",
-         f"Greater than {total} grams, because inflating adds weight.",
-         f"{total - b} grams, because solid turned into energy."]
+
+    opts, ans = helper_shuffle_options(
+        f"Exactly {total} grams, because the sealed balloon prevents gas produced by the reaction from escaping.",
+        [
+            f"Only {v + b} grams, because the glass flask loses its mass during a chemical reaction.",
+            f"Less than {total} grams, because gases produced in chemical reactions have zero measurable mass.",
+            f"{total - b} grams, because the solid baking soda atoms were converted directly into energy.",
+        ],
     )
     return {
-        "template_id": "closed_balloon", "topic": "Changes in Matter",
-        "scenario": f"{student} places {b}g baking soda in a balloon over a flask holding {v}g vinegar. The flask weighs {f}g. Initial scale reads {total}g. She tips the balloon, vigorous bubbling inflates it.",
-        "diagram": "flask_balloon", "diagram_params": {"total_mass": total, "expanded": True},
-        "question": "What will the scale display after the chemical reaction finishes?",
-        "options": options, "answer": ans,
-        "explanation": "In a closed system, matter cannot leave. According to the Law of Conservation of Mass, the reading remains exactly identical."
+        "template_id": "u2_balloon_gas",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "flask_balloon",
+        "diagram_params": {"total_mass": total, "expanded": True},
+        "scenario": (
+            f"A student measures an empty flask and balloon ({f} g). She pours in {v} g of vinegar "
+            f"and places {b} g of baking soda inside the balloon before sealing it tightly over the neck of the flask. "
+            f"The digital scale confirms the starting combined mass is {total} g ({f}g + {v}g + {b}g). "
+            f"She tips the balloon, dumping the powder into the liquid. Vigorous bubbling occurs, "
+            f"inflating the balloon with gas."
+        ),
+        "question": "What will the scale read after the bubbling stops while the balloon remains sealed?",
+        "hint": f"Add the parts: {f} g (flask) + {v} g (vinegar) + {b} g (baking soda) = {total} g. Did any gas escape the sealed system?",
+        "answer": ans,
+        "explanation": f"In a closed system, matter cannot escape. The total remains {f} g + {v} g + {b} g = {total} g.",
     }
 
 
-def gen_open_beaker_gas_mass():
-    initial, gas = random.randint(150, 250), round(random.uniform(1.2, 3.5), 1)
-    options, ans = helper_shuffle_options(
-        "Carbon dioxide gas produced by the reaction escaped into the surrounding room.",
-        ["Matter was destroyed as the solid tablet dissolved.", "Liquid water evaporated instantly.",
-         "The scale lost calibration."]
+def u2_open_beaker_gas_loss():
+    liq = random.randint(150, 220)
+    tab = random.choice([4, 5, 6])
+    loss = random.choice([2, 3])
+    initial = liq + tab
+    final = initial - loss
+
+    opts, ans = helper_shuffle_options(
+        f"{loss} grams of carbon dioxide gas escaped into the room air because the beaker was open.",
+        [
+            "The antacid tablet was completely destroyed by water, eliminating its atoms from existence.",
+            "Liquid water evaporated instantly due to boiling heat generated by the tablet.",
+            "The digital scale lost calibration because vigorous gas bubbles vibrated the platform.",
+        ],
     )
     return {
-        "template_id": "open_beaker", "topic": "Changes in Matter",
-        "scenario": f"A student drops a fizzing tablet into an open beaker of water (Initial Mass = {initial} g). When bubbling stops, the final reading is {round(initial - gas, 1)} g.",
-        "question": f"Why does the scale read {gas} g less than the initial mass?",
-        "options": options, "answer": ans,
-        "explanation": "The beaker is an open system. The missing mass was gas that bubbled out into the air."
+        "template_id": "u2_open_beaker",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": (
+            f"A student places an open beaker containing {liq} g of water on a balance and sets a {tab} g antacid "
+            f"tablet beside it. The scale shows a combined starting mass of {initial} g ({liq}g + {tab}g). "
+            f"She drops the tablet into the water. Bubbles fizz vigorously as gas forms. "
+            f"Once bubbling completely stops, the balance reads {final} g."
+        ),
+        "question": f"Why does the final reading show {loss} g less mass than the {initial} g starting mass?",
+        "hint": f"Subtract: {initial} g - {final} g = {loss} g. The container was open—where did the gas go?",
+        "answer": ans,
+        "explanation": f"In an open system, the gas escapes into the room. The {loss} g lost ({initial}g - {final}g) is the mass of the escaped gas.",
     }
 
 
-def gen_reversibility_changes():
-    scenarios = [
-        {"n": "Melting beeswax", "t": "Physical change", "r": "Easily reversible by cooling"},
-        {"n": "Baking a chocolate cake", "t": "Chemical change",
-         "r": "Not reversible because permanent chemical bonds formed"},
-        {"n": "Burning a dry pine log", "t": "Chemical change",
-         "r": "Not reversible because cellulose reacted with oxygen"},
-        {"n": "Freezing grape juice", "t": "Physical change", "r": "Easily reversible by warming"}
+def u2_rusting_mass_gain():
+    pad = 20
+    gain = 2.5
+    table = {
+        "Stage": ["Day 1: Clean Dry Steel Wool", "Day 4: Rusted Steel Wool"],
+        "Observation": ["Shiny, flexible metallic fibers", "Reddish-brown, crumbly crust"],
+        "Mass on Balance": [f"{pad}.0 g", f"{pad + gain} g"],
+    }
+    opts, ans = helper_shuffle_options(
+        "Iron atoms chemically bonded with oxygen atoms from the air to form rust, adding mass.",
+        [
+            "The digital scale malfunctioned, because chemical changes are proven to always reduce mass.",
+            "Water moisture from the air soaked into the iron fibers and permanently turned into solid metal.",
+            "Matter was created out of nothing by the humid atmosphere surrounding the steel wool pad.",
+        ],
+    )
+    return {
+        "template_id": "u2_rusting",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "table": table,
+        "scenario": f"A student dampens clean steel wool ({pad}.0 g) and leaves it on a balance exposed to air for 4 days.",
+        "question": f"Why does the rusted steel wool weigh {gain} g MORE than the original steel wool?",
+        "hint": "Rust is iron oxide. Iron bonded with oxygen atoms taken from the air. What did that add to the solid?",
+        "answer": ans,
+        "explanation": "Iron combines chemically with oxygen from the air. The added mass comes from the bonded oxygen atoms.",
+    }
+
+
+def u2_precipitate_indicator():
+    opts, ans = helper_shuffle_options(
+        "A chemical change, because two clear liquids reacted to form an insoluble solid precipitate.",
+        [
+            "A physical change, because mixing two liquids together always produces a solid naturally.",
+            "A phase change, because the liquid mixture instantly froze into solid ice at room temperature.",
+            "No change occurred, because the two clear liquids simply separated like oil and vinegar.",
+        ],
+    )
+    return {
+        "template_id": "u2_precipitate",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": "A student mixes two clear, colorless solutions. Instantly, the mixture turns cloudy white, and solid white particles settle to the bottom.",
+        "question": "What kind of change took place, and what evidence supports this conclusion?",
+        "hint": "When two clear liquids form a brand-new solid that sinks, that solid is called a precipitate. That proves a chemical reaction happened!",
+        "answer": ans,
+        "explanation": "Forming an insoluble solid precipitate from two clear liquids is definitive proof of a chemical change.",
+    }
+
+
+def u2_temperature_change_rxn():
+    opts, ans = helper_shuffle_options(
+        "A chemical change that released heat energy (an exothermic reaction).",
+        [
+            "A physical change where water molecules were boiled away into invisible steam.",
+            "A chemical change that absorbed heat energy from the air (an endothermic reaction).",
+            "A measurement error caused by glass expanding against the thermometer bulb.",
+        ],
+    )
+    return {
+        "template_id": "u2_temp_rxn",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": "A student dissolves white pellets into room-temperature water (21°C). Without heating from outside, the temperature rises to 44°C.",
+        "question": "What type of change occurred in the beaker?",
+        "hint": "The water got hot all by itself! Releasing heat energy indicates an exothermic chemical change.",
+        "answer": ans,
+        "explanation": "Releasing thermal energy (getting hotter without external heating) is a clear sign of an exothermic chemical change.",
+    }
+
+
+def u2_reversibility_classification():
+    examples = [
+        (
+            "Melting an ice pop in a glass bowl",
+            "Physical change",
+            "easily reversible by placing the liquid back into a freezer",
+        ),
+        (
+            "Toasting a slice of white bread in a toaster",
+            "Chemical change",
+            "irreversible because heat created brand-new chemical compounds",
+        ),
+        (
+            "Dissolving lemonade powder into cold water",
+            "Physical change",
+            "reversible by boiling away the liquid water to recover the solid powder",
+        ),
+        (
+            "Burning a wooden matchstick",
+            "Chemical change",
+            "irreversible because wood reacted into smoke, ash, and gases",
+        ),
     ]
-    pick = random.choice(scenarios)
-    wrong = "Chemical change" if pick["t"] == "Physical change" else "Physical change"
-    options, ans = helper_shuffle_options(
-        f"It is a {pick['t']}, and it is {pick['r']}.",
-        [f"It is a {wrong}, and it cannot ever be reversed.",
-         f"It is a {pick['t']}, but matter was permanently destroyed.",
-         f"It is a {wrong}, because mass converted into volume."]
+    item, kind, rev = random.choice(examples)
+    wrong_kind = "Chemical change" if kind == "Physical change" else "Physical change"
+    opts, ans = helper_shuffle_options(
+        f"{kind}, and it is {rev}.",
+        [
+            f"{wrong_kind}, and it is permanently irreversible under any conditions.",
+            f"{kind}, but all the mass in the original substance was destroyed.",
+            f"{wrong_kind}, because the substance changed temperature during the process.",
+        ],
     )
     return {
-        "template_id": "reversibility", "topic": "Changes in Matter",
-        "scenario": f"A student investigates: **{pick['n']}**.",
-        "question": "Which statement correctly classifies this change and evaluates its reversibility?",
-        "options": options, "answer": ans,
-        "explanation": f"{pick['n']} is a {pick['t']}. Physical state changes can usually be reversed, whereas chemical changes form new compounds."
+        "template_id": "u2_reversibility",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student investigates whether everyday changes can be undone: **{item}**.",
+        "question": "How is this process classified, and is it reversible?",
+        "hint": "Can you freeze melted juice back into an ice pop? Can you un-toast bread?",
+        "answer": ans,
+        "explanation": f"{item} is a {kind} because it is {rev}.",
     }
 
 
-def gen_precipitate_formation():
-    options, ans = helper_shuffle_options(
-        "A chemical reaction occurred because two liquids reacted to form an insoluble solid (precipitate).",
-        ["A physical change occurred because liquids evaporated.", "Matter was created out of nothing.",
-         "No change occurred; they merely blended."]
-    )
-    return {
-        "template_id": "precipitate", "topic": "Changes in Matter",
-        "scenario": "A student pours clear Epsom salt solution into clear washing soda solution. Instantly, the mixture turns cloudy and a white chalky solid sinks to the bottom.",
-        "question": "What scientific conclusion is best supported by the appearance of the solid?",
-        "options": options, "answer": ans,
-        "explanation": "Precipitate formation (a solid appearing from two clear liquids) is definitive proof of a chemical change."
-    }
-
-
-def gen_rusting_mass():
-    mass = random.randint(15, 25)
-    options, ans = helper_shuffle_options(
-        "Iron chemically bonded with oxygen atoms from the air, adding mass.",
-        ["The digital balance malfunctioned.", "Matter was magically created by humidity.",
-         "Water turned into solid metal."]
-    )
-    return {
-        "template_id": "rusting", "topic": "Changes in Matter",
-        "scenario": "A student places a damp steel wool pad on a balance. Over 3 days, it rusts, and the mass increases.",
-        "table": {"Stage": ["Initial", "Rusted"], "Mass": [f"{mass}.0 g", f"{mass + 2}.4 g"]},
-        "question": "Why does the rusted steel wool weigh MORE than the original iron?",
-        "options": options, "answer": ans,
-        "explanation": "Rust is iron oxide. The added mass comes from oxygen atoms pulled from the surrounding air."
-    }
-
-
-def gen_reaction_rate_variables():
-    vars = [
-        {"test": "Powdered sugar vs. solid sugar cube in identical water", "fac": "Surface area",
-         "res": "Powder dissolves faster because more surface area is exposed to water."},
-        {"test": "Antacid tablet in 10°C water vs. 60°C water", "fac": "Temperature",
-         "res": "Hot water reacts faster because heated molecules move and collide faster."},
-        {"test": "Stirred salt water vs. Unstirred salt water", "fac": "Mechanical agitation",
-         "res": "Stirring spreads particles faster."}
+def u2_factors_affecting_rate():
+    factors = [
+        (
+            "Crushed powdered sugar vs. a whole sugar cube of equal mass in 20°C water",
+            "The powder dissolves faster because smaller particles have more surface area touching water.",
+        ),
+        (
+            "Dropping an antacid tablet in 10°C water vs. 60°C water",
+            "The tablet in 60°C water reacts faster because hot molecules move faster and collide more often.",
+        ),
+        (
+            "Two cups of salt water: Cup A is stirred vigorously while Cup B sits still",
+            "Cup A dissolves faster because stirring circulates fresh water molecules around the salt.",
+        ),
     ]
-    pick = random.choice(vars)
-    options, ans = helper_shuffle_options(pick["res"], ["Both will react at the exact same rate.",
-                                                        "The colder/still one reacts faster.",
-                                                        "It will never dissolve without acids."])
-    return {
-        "template_id": "rxn_rate", "topic": "Changes in Matter",
-        "scenario": f"A student tests: **{pick['test']}**.",
-        "question": f"What will the student observe, and how does {pick['fac']} explain it?",
-        "options": options, "answer": ans, "explanation": pick["res"]
-    }
-
-
-def gen_evaporation_conservation():
-    water, salt = random.randint(150, 250), random.randint(20, 35)
-    options, ans = helper_shuffle_options(
-        f"Exactly {salt} grams of white salt crystals will remain.",
-        [f"{water + salt} grams of liquid salt.", "0 grams; salt evaporates with water.",
-         f"Only {round(salt / 2, 1)} grams because dissolving destroys mass."]
+    setup, correct_reason = random.choice(factors)
+    opts, ans = helper_shuffle_options(
+        correct_reason,
+        [
+            "Both will dissolve at the exact same rate because mass is always conserved in reactions.",
+            "The colder, un-stirred sample will dissolve faster because cold prevents liquid decay.",
+            "Neither sample will dissolve because solid particles cannot mix with liquid molecules.",
+        ],
     )
     return {
-        "template_id": "evap_conserv", "topic": "Changes in Matter",
-        "scenario": f"A student dissolves {salt} g of salt into {water} g of water. She places it under a heat lamp until every drop of water evaporates.",
-        "question": "What will be left in the dish, and what will its mass be?",
-        "options": options, "answer": ans,
-        "explanation": "Dissolving is physical. Water evaporates as gas, but the dissolved solid remains entirely behind."
+        "template_id": "u2_rxn_rate",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student investigates what affects reaction rates: **{setup}**.",
+        "question": "What will the student observe, and which scientific explanation is correct?",
+        "hint": "Think about heat speeding up molecules, or crushing solids to give more surface area.",
+        "answer": ans,
+        "explanation": correct_reason,
     }
 
 
-def gen_multistep_mixture_sep():
-    iron, sand, salt = random.randint(15, 30), random.randint(30, 50), random.randint(20, 35)
-    options, ans = helper_shuffle_options(
-        f"All components are recovered ({iron}g+{sand}g+{salt}g = {iron + sand + salt}g) because physical properties allow separation without destroying matter.",
-        ["Mass decreased because filtering destroys particles.", "Salt was destroyed when it turned into liquid.",
-         "The magnet altered chemical identities."]
+def u2_multistep_mixture_separation():
+    iron = random.randint(15, 25)
+    sand = random.randint(30, 45)
+    salt = random.randint(20, 30)
+    total = iron + sand + salt
+
+    table = {
+        "Step": [
+            "1. Pass magnet over dry mixture",
+            "2. Add water and stir",
+            "3. Pour through filter paper",
+            "4. Boil the filtered liquid",
+        ],
+        "Result": [
+            f"Iron filings separated ({iron} g)",
+            "Salt dissolves into the water",
+            f"Sand trapped on filter ({sand} g)",
+            f"Pure salt recovered ({salt} g)",
+        ],
+    }
+    opts, ans = helper_shuffle_options(
+        f"All {total} grams of original substances are recovered because separating mixtures uses physical properties without destroying matter.",
+        [
+            f"Only {sand + salt} grams are recovered because magnets destroy the mass of metals.",
+            "The salt was permanently destroyed in Step 2 when it dissolved into clear liquid water.",
+            "Mass decreased because paper filters remove microscopic atoms from physical existence.",
+        ],
     )
     return {
-        "template_id": "multistep_sep", "topic": "Changes in Matter",
-        "scenario": f"A {iron + sand + salt}g mixture of iron ({iron}g), sand ({sand}g), and salt ({salt}g) is separated using a magnet, filtering, and boiling.",
-        "question": "Which conclusion about the Law of Conservation of Mass is demonstrated here?",
-        "options": options, "answer": ans,
-        "explanation": "Mixtures are physically combined. Using physical properties allows 100% component recovery."
+        "template_id": "u2_mix_sep",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "table": table,
+        "scenario": (
+            f"A student measures out {iron} g of iron filings, {sand} g of playground sand, "
+            f"and {salt} g of table salt, creating a mixture with a verified total mass of "
+            f"{total} g ({iron}g + {sand}g + {salt}g). She separates the mixture using the four-step procedure below:"
+        ),
+        "question": "What does this experiment demonstrate about mixtures and the Law of Conservation of Mass?",
+        "hint": f"Add up the recovered amounts: {iron} g + {sand} g + {salt} g = {total} g. Was any matter lost?",
+        "answer": ans,
+        "explanation": f"Every component was recovered: {iron}g + {sand}g + {salt}g = {total}g. Physical separation preserves all mass.",
     }
 
 
-def gen_candle_dual_change():
-    options, ans = helper_shuffle_options(
-        "Wax melting is a physical change (state change), while the wick burning is a chemical change.",
-        ["Both are purely physical.", "Both are chemical changes that destroy atoms.",
-         "The flame is a physical change because light has volume."]
+def u2_candle_dual_change():
+    opts, ans = helper_shuffle_options(
+        "Wax melting is a physical change (state change), while wick and wax vapor burning is a chemical change.",
+        [
+            "Both wax melting and the burning flame are classified as purely physical changes.",
+            "Both wax melting and the burning flame are chemical changes that permanently destroy atoms.",
+            "The burning flame is a physical change because light and thermal heat have measurable mass.",
+        ],
     )
     return {
-        "template_id": "candle_dual", "topic": "Changes in Matter",
-        "scenario": "A student watches a candle. Solid wax melts into clear liquid pools, while the wick burns black and releases smoke.",
-        "question": "Which statement accurately distinguishes between the changes occurring simultaneously?",
-        "options": options, "answer": ans,
-        "explanation": "Melting is a reversible phase transition (physical). Burning produces new substances like smoke (chemical)."
+        "template_id": "u2_candle",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": "A student watches a burning candle. Solid wax melts into a clear liquid pool, while the wick burns and produces smoke.",
+        "question": "Which statement correctly distinguishes between the two processes occurring simultaneously?",
+        "hint": "Melting turns solid wax to liquid wax (can freeze back). Burning creates smoke and ash (cannot un-burn).",
+        "answer": ans,
+        "explanation": "Melting wax is a reversible physical change of state. Burning is a chemical change producing smoke and gases.",
     }
 
 
-def gen_thermal_reaction_types():
-    options, ans = helper_shuffle_options(
-        "A chemical change that released heat energy (exothermic reaction).",
-        ["A physical change where water was destroyed.", "A chemical change that absorbed heat (endothermic).",
-         "A phase change to plasma."]
-    )
-    return {
-        "template_id": "thermal_rxn", "topic": "Changes in Matter",
-        "scenario": "A student dissolves calcium chloride pellets in water. The beaker becomes noticeably hot, rising from 20°C to 42°C.",
-        "question": "Based on the temperature readout, which best describes the change?",
-        "options": options, "answer": ans,
-        "explanation": "Releasing thermal energy (getting hotter) is a clear indicator of an exothermic chemical reaction."
-    }
-
-
-# --- Category B: Multi-Archetype Factories for Other Topics ---
-
-def gen_properties_of_matter_factory():
-    archetypes = [
-        {
-            "id": "density_tower",
-            "scenario": "A student pours equal volumes of corn syrup, vegetable oil, and water into a tall glass. They separate into three distinct horizontal layers. The syrup is on the bottom, water in the middle, and oil floating on top.",
-            "question": "What physical property causes these liquids to stack in this specific order?",
-            "correct": "Density: The syrup has the highest density, and the oil has the lowest.",
-            "distractors": ["Solubility: The oil is most soluble.", "Magnetism: The syrup repels the water.",
-                            "Temperature: The oil is the hottest liquid."]
-        },
-        {
-            "id": "electrical_conductivity",
-            "scenario": "A student tests a circuit with a battery and a lightbulb. When she connects a copper wire, the bulb lights up. When she connects a glass rod, the bulb stays dark.",
-            "question": "What physical property is being tested?",
-            "correct": "Electrical conductivity",
-            "distractors": ["Thermal insulation", "Magnetic attraction", "State of matter"]
-        },
-        {
-            "id": "solubility_temp",
-            "scenario": f"A student adds {random.randint(2, 5)} spoons of sugar to a glass of 10°C cold water and another to a glass of 80°C hot water. She stirs both at the same speed.",
-            "question": "What will happen to the sugar in the hot water compared to the cold water?",
-            "correct": "It will dissolve faster and in greater amounts in the hot water.",
-            "distractors": ["It will immediately turn into a gas in the hot water.",
-                            "It will dissolve slower in the hot water.", "It will not dissolve in either glass."]
-        },
-        {
-            "id": "cyl_particles",
-            "scenario": "A student looks at a particle diagram of a solid block of ice and a liquid glass of water.",
-            "question": "How do the particles in the solid ice differ from the liquid water?",
-            "correct": "Solid particles are locked in a rigid, vibrating grid, while liquid particles slide past one another.",
-            "distractors": ["Solid particles fly freely around the room.", "Liquid particles completely stop moving.",
-                            "Solid particles are much larger than liquid particles."]
-        },
-        {
-            "id": "mixture_sep_tool",
-            "scenario": "A bowl contains a dry mixture of iron hardware nuts and aluminum screws of the exact same size and color.",
-            "question": "Which tool would easily separate this mixture without water?",
-            "correct": "A strong magnet, because iron is magnetic and aluminum is not.",
-            "distractors": ["A paper filter, because aluminum is smaller.",
-                            "A hot plate, because iron melts at room temperature.",
-                            "A magnifying glass, to burn the aluminum."]
-        }
+def u2_water_cycle_phase_changes():
+    changes = [
+        (
+            "Water vapor in the air cools and forms water droplets on a cold glass",
+            "Condensation",
+            "gas to liquid",
+        ),
+        (
+            "A shallow puddle of rainwater on a hot asphalt driveway disappears by noon",
+            "Evaporation",
+            "liquid to gas",
+        ),
+        (
+            "Liquid water inside ice cube trays placed in a freezer becomes solid ice",
+            "Freezing",
+            "liquid to solid",
+        ),
     ]
-    pick = random.choice(archetypes)
-    opts, ans = helper_shuffle_options(pick["correct"], pick["distractors"])
-    return {"template_id": pick["id"], "topic": "Properties of Matter", "scenario": pick["scenario"],
-            "question": pick["question"], "options": opts, "answer": ans,
-            "explanation": "Different materials have distinct physical properties (density, conductivity, magnetism, particle arrangement) used to identify and separate them."}
+    scenario, term, trans = random.choice(changes)
+    wrong_term = "Condensation" if term == "Evaporation" else "Evaporation"
+    opts, ans = helper_shuffle_options(
+        f"{term}, which is a physical change from {trans}.",
+        [
+            f"{wrong_term}, which is a chemical change producing brand-new molecules.",
+            f"{term}, which is a chemical reaction that completely destroys water mass.",
+            "A permanent transformation that cannot be reversed by heating or cooling.",
+        ],
+    )
+    return {
+        "template_id": "u2_phase",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student observes: **{scenario}**.",
+        "question": f"What scientific process occurred, and how is it classified?",
+        "hint": "Is water still water when it turns into vapor or droplets? Yes! So it's a physical state change.",
+        "answer": ans,
+        "explanation": f"{scenario} is {term} ({trans}), which is a physical change.",
+    }
 
 
+# ==============================================================================
+# 6. OTHER TOPICS (EARTH SYSTEMS, WATER, SPACE, ECOSYSTEMS)
+# ==============================================================================
 def gen_patterns_in_space_factory():
-    archetypes = [
-        {
-            "id": "constellation_seasons",
-            "scenario": "A student easily spots the constellation Orion high in the winter night sky. Six months later, during summer, Orion is completely invisible at night.",
-            "question": "What causes Orion to disappear from the summer night sky?",
-            "correct": "Earth's yearly revolution (orbit) around the Sun changes which stars are visible at night.",
-            "distractors": ["Earth's daily rotation blocks the stars.",
-                            "The stars physically fly to the other side of the galaxy.",
-                            "The Sun's brightness destroys winter constellations."]
-        },
-        {
-            "id": "day_night_cause",
-            "scenario": "It is daytime in New York but nighttime in Tokyo, Japan.",
-            "question": "What primary movement in space causes the cycle of day and night?",
-            "correct": "Earth rotating on its own axis once every 24 hours.",
-            "distractors": ["Earth revolving around the Sun once a year.", "The Sun orbiting around the Earth daily.",
-                            "The Moon blocking the Sun's light at night."]
-        },
-        {
-            "id": "star_distance_brightness",
-            "scenario": "Star A is a small, dim star located 4 light-years away. Star B is a massive, incredibly bright supergiant located 1,000 light-years away.",
-            "question": "Why might Star A appear much brighter to human eyes on Earth than Star B?",
-            "correct": "Apparent brightness depends heavily on distance; closer stars appear brighter.",
-            "distractors": ["Small stars always generate more energy than supergiants.",
-                            "Star B does not emit any visible light.", "Telescopes cannot see past 100 light-years."]
-        },
-        {
-            "id": "shadow_length_time",
-            "scenario": f"A student measures a flagpole's shadow at {random.choice(['8:00 AM', '5:00 PM'])}.",
-            "question": "Why is the shadow extremely long at this time of day?",
-            "correct": "The Sun is at a low angle near the horizon.",
-            "distractors": ["The Sun is directly overhead at its highest point.", "The Earth is furthest from the Sun.",
-                            "The Moon is creating the shadow."]
-        },
-        {
-            "id": "gravity_scale",
-            "scenario": "An astronaut lands on a massive gas giant planet that has 300 times the mass of Earth.",
-            "question": "How would the gravitational pull on this planet compare to Earth?",
-            "correct": "It would be much stronger because the planet has significantly more mass.",
-            "distractors": ["It would be weaker because gas is lighter than rock.",
-                            "It would be exactly the same as Earth's gravity.",
-                            "Gravity does not exist on other planets."]
-        }
+    times = [
+        {"label": "8:30 AM (Early Morning)", "sun_x": 1.5, "sun_y": 2.2, "is_noon": False},
+        {"label": "12:15 PM (Solar Noon)", "sun_x": 5.0, "sun_y": 5.8, "is_noon": True},
+        {"label": "4:45 PM (Late Afternoon)", "sun_x": 8.5, "sun_y": 2.4, "is_noon": False},
     ]
-    pick = random.choice(archetypes)
-    opts, ans = helper_shuffle_options(pick["correct"], pick["distractors"])
-    return {"template_id": pick["id"], "topic": "Patterns in Space", "scenario": pick["scenario"],
-            "question": pick["question"], "options": opts, "answer": ans,
-            "explanation": "Space patterns (day/night, seasons, apparent brightness, shadows) are driven by Earth's rotation, Earth's orbit, and relative distance."}
+    pick = random.choice(times)
+    if pick["is_noon"]:
+        correct = "The shadow is at its shortest because the Sun reaches its highest apparent point in the sky."
+        distractors = [
+            "The shadow is at its longest because the Sun is furthest from Earth.",
+            "The shadow points directly West because Earth reversed its spin.",
+            "Shadows only form during morning hours.",
+        ]
+    else:
+        correct = "The shadow is long because the Sun is at a low angle near the horizon."
+        distractors = [
+            "The shadow is short because the Sun is overhead.",
+            "The shadow points toward the Sun instead of away from it.",
+            "Earth stopped rotating.",
+        ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "space_shadow_patterns",
+        "topic": "Patterns in Space",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "shadow_diagram",
+        "diagram_params": pick,
+        "scenario": f"A student monitors a flagpole shadow at {pick['label']}.",
+        "question": f"Based on the Sun's position at {pick['label']}, which statement accurately explains the shadow formed?",
+        "hint": "Low Sun in sky = long shadow. High Sun overhead = short shadow.",
+        "answer": ans,
+        "explanation": "Earth's daily 24-hour rotation causes the Sun to appear low at morning/evening (long shadows) and high around noon (short shadows).",
+    }
 
 
 def gen_earths_systems_factory():
-    archetypes = [
-        {
-            "id": "sphere_volcano",
-            "scenario": "A massive volcano erupts, spewing molten rock and thick clouds of ash blocking sunlight for weeks.",
-            "question": "Which two spheres are interacting when the ash blocks the sunlight?",
-            "correct": "Geosphere (rock/ash) and Atmosphere (air/sky)",
-            "distractors": ["Hydrosphere and Biosphere", "Biosphere and Geosphere", "Hydrosphere and Cryosphere"]
-        },
-        {
-            "id": "sphere_erosion",
-            "scenario": "A fast-moving river carves a deep V-shaped canyon into the bedrock over millions of years.",
-            "question": "This canyon formation is a direct interaction between the:",
-            "correct": "Hydrosphere and Geosphere",
-            "distractors": ["Biosphere and Atmosphere", "Atmosphere and Geosphere", "Cryosphere and Biosphere"]
-        },
-        {
-            "id": "sphere_gas_exchange",
-            "scenario": "Millions of pine trees in a forest absorb carbon dioxide and release oxygen during photosynthesis.",
-            "question": "This gas exchange is an interaction between the:",
-            "correct": "Biosphere and Atmosphere",
-            "distractors": ["Geosphere and Hydrosphere", "Hydrosphere and Biosphere", "Geosphere and Atmosphere"]
-        },
-        {
-            "id": "sphere_rain_shadow",
-            "scenario": "Warm, moist ocean air blows into a tall mountain range, rises, cools, and drops heavy rain on one side of the mountain.",
-            "question": "Which spheres are interacting to create this rainfall pattern?",
-            "correct": "Atmosphere, Hydrosphere, and Geosphere",
-            "distractors": ["Biosphere and Cryosphere only", "Geosphere and Biosphere only",
-                            "Atmosphere and Biosphere only"]
-        },
-        {
-            "id": "sphere_roots",
-            "scenario": "The roots of an oak tree slowly wedge into a crack in a granite boulder, eventually splitting the rock in half.",
-            "question": "Which two spheres are interacting here?",
-            "correct": "Biosphere and Geosphere",
-            "distractors": ["Hydrosphere and Atmosphere", "Atmosphere and Biosphere", "Hydrosphere and Geosphere"]
-        }
+    events = [
+        (
+            "A river carves a deep canyon through rock layers over millions of years.",
+            "Hydrosphere (moving river water) and Geosphere (canyon rock layers)",
+            "Hydrosphere and Geosphere",
+        ),
+        (
+            "Forest pine trees absorb carbon dioxide and release oxygen during the day.",
+            "Biosphere (living pine trees) and Atmosphere (surrounding air gases)",
+            "Biosphere and Atmosphere",
+        ),
+        (
+            "Tree roots wedge into a crack in a granite boulder and split it.",
+            "Biosphere (living tree roots) and Geosphere (granite rock)",
+            "Biosphere and Geosphere",
+        ),
     ]
-    pick = random.choice(archetypes)
-    opts, ans = helper_shuffle_options(pick["correct"], pick["distractors"])
-    return {"template_id": pick["id"], "topic": "Earth's Systems", "scenario": pick["scenario"],
-            "question": pick["question"], "options": opts, "answer": ans,
-            "explanation": "Earth's four major systems (Geosphere=rock, Hydrosphere=water, Atmosphere=air, Biosphere=life) constantly interact to shape the planet."}
+    pick = random.choice(events)
+    correct = pick[1]
+    distractors = [
+        "Atmosphere (air pressure) and Geosphere (solid rock layers)",
+        "Cryosphere (frozen polar ice) and Biosphere (living organisms)",
+        "Hydrosphere (liquid ocean water) and Biosphere (living animals)",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "sys_sphere_interactions",
+        "topic": "Earth's Systems",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"Consider this natural phenomenon: **{pick[0]}**",
+        "question": "Which two of Earth's four spheres interact during this event?",
+        "hint": "Break it down: Water = Hydro, Rock = Geo, Air = Atmo, Life = Bio.",
+        "answer": ans,
+        "explanation": f"This process is an interaction between the {pick[2]}.",
+    }
 
 
 def gen_earths_water_factory():
-    archetypes = [
-        {
-            "id": "water_dist_glaciers",
-            "scenario": "A student looks at a chart showing all of Earth's freshwater.",
-            "question": "Where is the vast majority (nearly 69%) of Earth's freshwater physically located?",
-            "correct": "Locked up in solid glaciers and polar ice caps.",
-            "distractors": ["Flowing in rivers and streams.", "Floating in the atmosphere as clouds.",
-                            "Sitting in the oceans."]
-        },
-        {
-            "id": "water_dist_oceans",
-            "scenario": "An astronaut looks at Earth from space and notes it is mostly blue.",
-            "question": "Approximately what percentage of ALL water on Earth is saltwater found in oceans?",
-            "correct": "About 97%",
-            "distractors": ["About 50%", "About 25%", "About 5%"]
-        },
-        {
-            "id": "water_aquifer",
-            "scenario": "A farming town gets zero rain for a month, yet they still pump fresh water from a deep well into their fields.",
-            "question": "Where is this well water coming from?",
-            "correct": "Groundwater stored in underground aquifers (porous rock layers).",
-            "distractors": ["Underground saltwater oceans.", "Water magically created by the well pump.",
-                            "Condensation directly from the dry air."]
-        },
-        {
-            "id": "water_cycle_evap",
-            "scenario": "A puddle of rainwater on a hot sidewalk disappears completely by the afternoon.",
-            "question": "What part of the water cycle caused this, and what sphere did the water enter?",
-            "correct": "Evaporation; it entered the Atmosphere as a gas.",
-            "distractors": ["Precipitation; it entered the Geosphere.", "Condensation; it entered the Biosphere.",
-                            "Runoff; it entered the Hydrosphere."]
-        }
+    correct = "Frozen inside solid polar ice caps and mountain glaciers (about 68%)."
+    distractors = [
+        "Flowing freely through freshwater rivers, streams, and lakes.",
+        "Floating in the atmosphere as clouds and invisible water vapor.",
+        "Stored in the vast saltwater oceans and coastal estuaries.",
     ]
-    pick = random.choice(archetypes)
-    opts, ans = helper_shuffle_options(pick["correct"], pick["distractors"])
-    return {"template_id": pick["id"], "topic": "Earth's Water", "scenario": pick["scenario"],
-            "question": pick["question"], "options": opts, "answer": ans,
-            "explanation": "Most of Earth's water is salty (97%). Of the 3% freshwater, most is frozen in glaciers, leaving very little as surface or groundwater."}
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "water_freshwater_res",
+        "topic": "Earth's Water",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": "A scientist reviews data tables showing all freshwater sources on Earth.",
+        "question": "Where is the largest reservoir of Earth's FRESHWATER stored?",
+        "hint": "Most freshwater is frozen solid at the North and South poles!",
+        "answer": ans,
+        "explanation": "About 68% of all freshwater on Earth is frozen in glaciers and polar ice caps.",
+    }
 
 
 def gen_ecosystems_factory():
-    archetypes = [
+    chains = [
         {
-            "id": "eco_plant_mass",
-            "scenario": "A tiny acorn grows into a massive, 2,000-pound oak tree over 50 years.",
-            "question": "Where did the vast majority of the matter (mass) making up the wood of the tree come from?",
-            "correct": "Carbon dioxide gas absorbed from the air and water.",
-            "distractors": ["Solid dirt and soil pulled up by the roots.",
-                            "Sunlight magically turning into solid wood.",
-                            "Fertilizer crystals scattered on the ground."]
+            "chain": "Sun ➔ Phytoplankton ➔ Krill ➔ Baleen Whale",
+            "q": "What is the primary source of energy that sustains this entire marine food chain?",
+            "c": "Solar energy captured by phytoplankton through photosynthesis.",
+            "d": [
+                "Thermal heat radiated from deep ocean vents.",
+                "Nutrients produced directly by the baleen whale.",
+                "Salt dissolved in ocean water.",
+            ],
+            "h": "Almost all food chains on Earth start with the same source of light energy.",
         },
         {
-            "id": "eco_decomposers",
-            "scenario": "A dead log on the forest floor is covered in mushrooms and bacteria.",
-            "question": "What critical role do these organisms (decomposers) play in the ecosystem?",
-            "correct": "They break down dead matter and recycle necessary nutrients back into the soil.",
-            "distractors": ["They produce oxygen for animals to breathe.",
-                            "They hunt small insects to control populations.", "They absorb sunlight to make sugars."]
+            "chain": "Oak Leaves ➔ Caterpillar ➔ Songbird ➔ Decomposers (Fungi)",
+            "q": "What essential role do decomposers perform in this ecosystem?",
+            "c": "Breaking down dead matter to recycle nutrients back into the soil for plants.",
+            "d": [
+                "Producing oxygen gas for forest animals through photosynthesis.",
+                "Hunting live insect populations to keep ecosystems balanced.",
+                "Absorbing solar energy to produce glucose sugars for carnivores.",
+            ],
+            "h": "Decomposers recycle dead material back into plant food in the dirt.",
         },
-        {
-            "id": "eco_food_web_disruption",
-            "scenario": "In a meadow: Grass -> Grasshoppers -> Frogs -> Snakes. A disease wipes out the frog population entirely.",
-            "question": "What is the most likely immediate effect on the grasshopper and snake populations?",
-            "correct": "Grasshoppers will increase (fewer predators), and snakes will decrease (less food).",
-            "distractors": ["Both will increase rapidly.", "Both will decrease rapidly.",
-                            "Grasshoppers will decrease, and snakes will increase."]
-        },
-        {
-            "id": "eco_sun_energy",
-            "scenario": "Deep ocean kelp (a plant) is eaten by sea urchins, which are eaten by sea otters.",
-            "question": "What is the original source of energy that sustains this entire kelp forest food web?",
-            "correct": "Sunlight captured by the kelp through photosynthesis.",
-            "distractors": ["Heat from deep ocean volcanoes.", "Nutrients produced by the sea otters.",
-                            "Salt dissolved in the ocean water."]
-        }
     ]
-    pick = random.choice(archetypes)
-    opts, ans = helper_shuffle_options(pick["correct"], pick["distractors"])
-    return {"template_id": pick["id"], "topic": "Matter & Energy in Ecosystems", "scenario": pick["scenario"],
-            "question": pick["question"], "options": opts, "answer": ans,
-            "explanation": "Ecosystems rely on the Sun for energy, producers to make food (using CO2 and water), consumers to transfer energy, and decomposers to recycle matter."}
+    pick = random.choice(chains)
+    opts, ans = helper_shuffle_options(pick["c"], pick["d"])
+    return {
+        "template_id": "eco_food_chains",
+        "topic": "Matter & Energy in Ecosystems",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"Consider this energy flow model: **{pick['chain']}**",
+        "question": pick["q"],
+        "hint": pick["h"],
+        "answer": ans,
+        "explanation": f"Correct: {pick['c']}",
+    }
 
 
-# Master Generator Registry
+# ==============================================================================
+# 7. MASTER GENERATOR REGISTRY
+# ==============================================================================
 GENERATORS = [
-    gen_closed_balloon_system, gen_open_beaker_gas_mass, gen_reversibility_changes,
-    gen_precipitate_formation, gen_rusting_mass, gen_reaction_rate_variables,
-    gen_evaporation_conservation, gen_multistep_mixture_sep, gen_candle_dual_change,
-    gen_thermal_reaction_types,
-    gen_properties_of_matter_factory, gen_patterns_in_space_factory,
-    gen_earths_systems_factory, gen_earths_water_factory, gen_ecosystems_factory
+    # Unit 1: Properties of Matter (12 Dedicated Functions)
+    u1_measuring_tools,
+    u1_thermal_conductivity,
+    u1_density_sink_float,
+    u1_density_column_visual,
+    u1_magnetism_metals,
+    u1_solubility_saturation,
+    u1_particle_state_spacing,
+    u1_gas_has_mass,
+    u1_graduated_cylinder_volume,
+    u1_pan_balance_comparison,
+    u1_electrical_conductors_insulators,
+    u1_identifying_unknown_substance,
+    # Unit 2: Changes in Matter (12 Dedicated Functions)
+    u2_conservation_dissolving,
+    u2_conservation_melting,
+    u2_closed_balloon_gas,
+    u2_open_beaker_gas_loss,
+    u2_rusting_mass_gain,
+    u2_precipitate_indicator,
+    u2_temperature_change_rxn,
+    u2_reversibility_classification,
+    u2_factors_affecting_rate,
+    u2_multistep_mixture_separation,
+    u2_candle_dual_change,
+    u2_water_cycle_phase_changes,
+    # Other Curriculum Topics
+    gen_patterns_in_space_factory,
+    gen_earths_systems_factory,
+    gen_earths_water_factory,
+    gen_ecosystems_factory,
 ]
 
 TOPIC_TO_GENERATORS = {}
 for g in GENERATORS:
-    t = g()["topic"]
-    TOPIC_TO_GENERATORS.setdefault(t, []).append(g)
+    dummy = g()
+    TOPIC_TO_GENERATORS.setdefault(dummy["topic"], []).append(g)
 
 ALL_TOPICS = sorted(list(TOPIC_TO_GENERATORS.keys()))
 init_db()
 
 # ==============================================================================
-# 4. STREAMLIT APPLICATION UI
+# 8. STREAMLIT APPLICATION UI
 # ==============================================================================
-st.set_page_config(page_title="Savvas Elevate Science Prep", page_icon="🔬", layout="wide")
+st.set_page_config(
+    page_title="Savvas Elevate Science Homeschool Tutor",
+    page_icon="🔬",
+    layout="wide",
+)
 
 for key in ["student", "current_q", "answered", "feedback"]:
-    if key not in st.session_state: st.session_state[key] = None
+    if key not in st.session_state:
+        st.session_state[key] = None
+
 for key in ["mastery", "recent_templates"]:
-    if key not in st.session_state: st.session_state[key] = {} if key == "mastery" else []
-if "q_counter" not in st.session_state: st.session_state.q_counter = 0
+    if key not in st.session_state:
+        st.session_state[key] = {} if key == "mastery" else []
+
+if "q_counter" not in st.session_state:
+    st.session_state.q_counter = 0
 
 # --- Sidebar UI ---
 with st.sidebar:
     st.header("👤 Student Profile")
     existing_students = list_students()
-    profile_mode = st.radio("Profile Action:", ["Select Existing Student", "Add New Student"], horizontal=True)
+    profile_mode = st.radio(
+        "Profile Action:",
+        ["Select Existing Student", "Add New Student"],
+        horizontal=True,
+    )
 
     if profile_mode == "Select Existing Student":
         if existing_students:
             names = [s["name"] for s in existing_students]
-            idx = names.index(st.session_state.student["name"]) if st.session_state.student and \
-                                                                   st.session_state.student["name"] in names else 0
+            idx = (
+                names.index(st.session_state.student["name"])
+                if st.session_state.student
+                and st.session_state.student["name"] in names
+                else 0
+            )
             chosen_name = st.selectbox("Choose Student:", names, index=idx)
             if st.button("Load Profile"):
                 p = get_or_create_student(chosen_name)
-                st.session_state.update({"student": p, "mastery": load_mastery(p["id"], ALL_TOPICS), "current_q": None,
-                                         "recent_templates": [], "answered": False, "feedback": None})
+                st.session_state.update({
+                    "student": p,
+                    "mastery": load_mastery(p["id"], ALL_TOPICS),
+                    "current_q": None,
+                    "recent_templates": [],
+                    "answered": False,
+                    "feedback": None,
+                })
                 st.rerun()
         else:
             st.info("No saved students found. Please choose 'Add New Student'.")
@@ -663,88 +1553,229 @@ with st.sidebar:
         new_name = st.text_input("New Student Name:")
         if st.button("Create & Start") and new_name.strip():
             p = get_or_create_student(new_name)
-            st.session_state.update(
-                {"student": p, "mastery": load_mastery(p["id"], ALL_TOPICS), "current_q": None, "recent_templates": [],
-                 "answered": False, "feedback": None})
+            st.session_state.update({
+                "student": p,
+                "mastery": load_mastery(p["id"], ALL_TOPICS),
+                "current_q": None,
+                "recent_templates": [],
+                "answered": False,
+                "feedback": None,
+            })
             st.rerun()
 
     if st.session_state.student:
+        st.caption(f"Active Student: **{st.session_state.student['name']}**")
         if st.button("🔄 Reset This Student to 0%", type="secondary"):
             reset_student_progress(st.session_state.student["id"], ALL_TOPICS)
-            st.session_state.update(
-                {"mastery": {t: 0.0 for t in ALL_TOPICS}, "recent_templates": [], "current_q": None, "answered": False,
-                 "feedback": None})
+            st.session_state.update({
+                "mastery": {t: 0.0 for t in ALL_TOPICS},
+                "recent_templates": [],
+                "current_q": None,
+                "answered": False,
+                "feedback": None,
+            })
             st.toast("Progress reset to 0%!", icon="🔄")
             st.rerun()
 
     st.markdown("---")
-    selected_topics = st.multiselect("🎯 Focus Topics:", ALL_TOPICS, default=[ALL_TOPICS[0]])
-    st.markdown("---")
+    unit1_and_2 = [
+        t for t in ["Properties of Matter", "Changes in Matter"] if t in ALL_TOPICS
+    ]
+    selected_topics = st.multiselect(
+        "🎯 Focus Units for Today:",
+        ALL_TOPICS,
+        default=unit1_and_2 if unit1_and_2 else [ALL_TOPICS[0]],
+    )
 
+    st.markdown("---")
     if st.session_state.student:
-        st.header("📊 Topic Mastery")
+        st.header("📊 Current Topic Mastery")
         for topic in selected_topics:
             score = st.session_state.mastery.get(topic, 0.0)
             st.write(f"**{topic}** ({int(score * 100)}%)")
             st.progress(score)
 
 
-# --- Question Dispatcher ---
+# --- Adaptive Question Dispatcher ---
 def pick_next_question():
-    if not selected_topics: return
-    funcs = [f for t in selected_topics for f in TOPIC_TO_GENERATORS.get(t, [])]
-    if not funcs: return
+    if not selected_topics:
+        st.session_state.current_q = None
+        return
 
-    # Anti-repetition: avoid recent archetypes
+    funcs = [f for t in selected_topics for f in TOPIC_TO_GENERATORS.get(t, [])]
+    if not funcs:
+        st.session_state.current_q = None
+        return
+
     cooling = [f for f in funcs if f.__name__ not in st.session_state.recent_templates]
     if not cooling:
-        last = st.session_state.recent_templates[-1] if st.session_state.recent_templates else None
+        last = (
+            st.session_state.recent_templates[-1]
+            if st.session_state.recent_templates
+            else None
+        )
         cooling = [f for f in funcs if f.__name__ != last] or funcs
         st.session_state.recent_templates = []
 
-    chosen_func = random.choice(cooling)
+    weights = []
+    for f in cooling:
+        dummy = f()
+        score = st.session_state.mastery.get(dummy["topic"], 0.0)
+        weights.append(max(0.1, 1.0 - score))
+
+    chosen_func = random.choices(cooling, weights=weights, k=1)[0]
     st.session_state.current_q = chosen_func()
     st.session_state.answered = False
     st.session_state.feedback = None
     st.session_state.q_counter += 1
 
     st.session_state.recent_templates.append(chosen_func.__name__)
-    if len(st.session_state.recent_templates) > 6: st.session_state.recent_templates.pop(0)
+    if len(st.session_state.recent_templates) > 8:
+        st.session_state.recent_templates.pop(0)
 
 
 # --- Main UI Area ---
-st.title("🔬 Elevate Science Adaptive Prep")
+st.title("🔬 Savvas Elevate Science Tutor")
 
-if not st.session_state.student: st.info("👈 Select or create a student profile to begin."); st.stop()
-if not selected_topics: st.warning("👈 Please select at least one unit topic."); st.stop()
-if st.session_state.current_q is None or st.session_state.current_q[
-    "topic"] not in selected_topics: pick_next_question()
+if not st.session_state.student:
+    st.info("👈 Select or create a student profile in the sidebar to begin.")
+    st.stop()
+
+if not selected_topics:
+    st.warning("👈 Please select at least one unit topic in the sidebar.")
+    st.stop()
+
+if (
+    st.session_state.current_q is None
+    or st.session_state.current_q["topic"] not in selected_topics
+):
+    pick_next_question()
 
 q = st.session_state.current_q
-st.caption(f"Unit: **{q['topic']}**")
-st.info(f"**Scenario:**\n\n{q['scenario']}")
+if q is None:
+    st.warning("No questions available for the selected unit.")
+    st.stop()
 
-if "diagram" in q: st.image(generate_diagram(q["diagram"], q.get("diagram_params", {})), width=460)
-if "table" in q: st.write("**Reference Data Table:**"); st.dataframe(pd.DataFrame(q["table"]), use_container_width=True,
-                                                                     hide_index=True)
+# ==============================================================================
+# ADAPTIVE TEACHER INTERVENTION: TRIGGER MINI-LESSON ON LOW MASTERY (< 40%)
+# ==============================================================================
+current_topic_mastery = st.session_state.mastery.get(q["topic"], 0.0)
+
+if current_topic_mastery < 0.40 and q["topic"] in MINI_LESSONS:
+    lesson_info = MINI_LESSONS[q["topic"]]
+    with st.expander(
+        f"📖 **Teacher Mode Activated: {lesson_info['title']}** (Click to Review Concepts)",
+        expanded=False,
+    ):
+        st.markdown(lesson_info["concept"])
+        st.markdown("#### 📝 Worked Step-by-Step Example")
+        st.info(lesson_info["example"])
+        st.warning(f"⚠️ **Watch Out for This Common Mistake:** {lesson_info['trap']}")
+
+st.caption(f"Curriculum Unit: **{q['topic']}** | Skill Code: `{q['template_id']}`")
+st.info(f"**Scenario / Context:**\n\n{q['scenario']}")
+
+if "table" in q:
+    st.write("**Reference Data Table:**")
+    st.dataframe(pd.DataFrame(q["table"]), hide_index=True)
+
+if "diagram" in q:
+    img_buffer = generate_diagram(q["diagram"], q.get("diagram_params", {}))
+    st.image(img_buffer, width=460)
+
+if "hint" in q and not st.session_state.answered:
+    with st.expander("💡 Need a Teacher Hint? Click here before answering!"):
+        st.info(q["hint"])
 
 st.write(f"### {q['question']}")
 
-with st.form(key=f"form_{q['template_id']}_{st.session_state.q_counter}"):
-    user_choice = st.radio("Select your answer:", q["options"], index=None, disabled=st.session_state.answered)
-    submit = st.form_submit_button("Submit Answer", disabled=st.session_state.answered)
+form_key = f"form_{q['template_id']}_{st.session_state.q_counter}"
+with st.form(key=form_key):
+    input_mode = q.get("input_type", "radio")
+    user_response = None
 
-if submit and user_choice is not None and not st.session_state.answered:
-    st.session_state.answered, is_correct = True, user_choice == q["answer"]
-    curr_score = st.session_state.mastery.get(q["topic"], 0.0)
+    if input_mode == "radio":
+        user_response = st.radio(
+            "Choose the correct answer:",
+            q["options"],
+            index=None,
+            disabled=st.session_state.answered,
+        )
 
-    new_score = min(1.0, curr_score + 0.15) if is_correct else max(0.0, curr_score - 0.20)
-    st.session_state.feedback = {
-        "type": "success" if is_correct else "error",
-        "msg": f"🎉 **Correct!**\n\n{q['explanation']}" if is_correct else f"❌ **Not quite.**\n\n**Correct Answer:** {q['answer']}\n\n💡 **Concept:** {q['explanation']}"
-    }
-    st.session_state.mastery[q["topic"]] = new_score
-    record_attempt(st.session_state.student["id"], q["topic"], q["template_id"], is_correct, user_choice, new_score)
+    elif input_mode == "multiselect":
+        st.write("**Choose all that apply:**")
+        selected_boxes = []
+        for opt in q["options"]:
+            if st.checkbox(opt, key=f"chk_{opt}_{st.session_state.q_counter}"):
+                selected_boxes.append(opt)
+        user_response = selected_boxes
+
+    elif input_mode == "multi_text":
+        user_response = {}
+        for field in q["blank_fields"]:
+            user_response[field["key"]] = st.text_input(
+                field["label"],
+                placeholder=field["placeholder"],
+                disabled=st.session_state.answered,
+                key=f"field_{field['key']}_{st.session_state.q_counter}",
+            )
+
+    else:
+        user_response = st.text_input(
+            "Fill in the blank:",
+            placeholder=q.get("placeholder", "Type your answer here..."),
+            disabled=st.session_state.answered,
+        )
+
+    submit = st.form_submit_button(
+        "Check Answer", disabled=st.session_state.answered
+    )
+
+    if submit and not st.session_state.answered:
+        has_input = False
+        if input_mode == "multiselect":
+            has_input = len(user_response) > 0
+        elif input_mode == "multi_text":
+            has_input = all(str(v).strip() != "" for v in user_response.values())
+        elif user_response is not None and str(user_response).strip() != "":
+            has_input = True
+
+        if has_input:
+            st.session_state.answered = True
+            is_correct = check_user_answer(user_response, q)
+            curr_score = st.session_state.mastery.get(q["topic"], 0.0)
+            new_score = (
+                min(1.0, curr_score + random.uniform(0.06, 0.12))
+                if is_correct
+                else max(0.0, curr_score - random.uniform(0.08, 0.15))
+            )
+
+            correct_ans_display = q.get("answer", "")
+            if input_mode == "multiselect":
+                correct_ans_display = ", ".join(q.get("correct_answers", []))
+            elif input_mode == "multi_text":
+                correct_ans_display = " | ".join(
+                    [f"{k}: {v[0]}" for k, v in q.get("accepted_answers_dict", {}).items()]
+                )
+
+            st.session_state.feedback = {
+                "type": "success" if is_correct else "error",
+                "msg": (
+                    f"🎉 **Correct!**\n\n{q['explanation']}"
+                    if is_correct
+                    else f"❌ **Not quite.**\n\n**Correct Answer:** {correct_ans_display}\n\n💡 **Explanation:** {q['explanation']}"
+                ),
+            }
+
+            st.session_state.mastery[q["topic"]] = new_score
+            record_attempt(
+                st.session_state.student["id"],
+                q["topic"],
+                q["template_id"],
+                is_correct,
+                str(user_response),
+                new_score,
+            )
 
 if st.session_state.feedback:
     if st.session_state.feedback["type"] == "success":
