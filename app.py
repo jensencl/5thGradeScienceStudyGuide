@@ -20,6 +20,9 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
+# Global label color for universal high-contrast legibility across dark/light themes
+LABEL_COLOR = "#ef4444"
+
 # ==============================================================================
 # 1. DATABASE SETUP & PERSISTENCE (NEON POSTGRESQL)
 # ==============================================================================
@@ -179,106 +182,69 @@ def record_attempt(
 
 
 # ==============================================================================
-# 2. TEACHER INSTRUCTION REPOSITORY: SAVVAS 5TH GRADE SCIENCE
+# 2. TEACHER INSTRUCTION REPOSITORY
 # ==============================================================================
 MINI_LESSONS = {
     "Properties of Matter": {
-        "title": "Properties of Matter Foundations",
+        "title": "Properties of Matter & Atomic Models",
         "concept": """
-### 👩‍🏫 Unit 1: What Is Matter & How Do We Measure It?
-* **Matter**: Anything that has mass and takes up volume.
-* **Mass vs. Weight**: Mass is measured in grams using a **pan balance**. Weight is the force of gravity measured with a **spring scale**.
-* **Volume**: The space occupied by matter (measured in mL using a graduated cylinder or $\text{cm}^3$ using a ruler).
+### 👩‍🏫 Unit 1: Atoms, Molecules, and States of Matter
+* **Atoms & Elements**: An **element** is a pure substance made of only one kind of atom (like pure Oxygen or Carbon).
+* **Molecules & Compounds**: When two or more different elements chemically bond together, they form a **compound** (e.g., Water is $\\text{H}_2\\text{O}$, Carbon Dioxide is $\\text{CO}_2$).
+* **Why Scientists Use Models**: Atoms and molecules are far too tiny to see with the naked eye or even a standard classroom hand lens. Models help us visualize how parts fit together.
 * **States of Matter**:
-  * **Solid**: Rigid, fixed vibrating particles; definite shape and volume.
-  * **Liquid**: Particles remain in contact but slide past one another; definite volume, takes the container's shape.
-  * **Gas**: High-energy particles spread far apart to fill any container; has real mass.
-* **Density**: $\text{Density} = \frac{\text{Mass}}{\text{Volume}}$. Pure water is $1.0\text{ g/mL}$. Substances with density $> 1.0$ sink; $< 1.0$ float.
-* **Conductivity & Magnetism**: Conductors (copper, iron, aluminum) easily transfer electricity or thermal energy. Insulators (rubber, plastic, wood) resist transfer. Only iron, nickel, and cobalt are magnetic.
+  * **Solid**: Tightly packed particles in a fixed lattice. Vibrates in place with definite shape and volume.
+  * **Liquid**: Particles are touching but roll and slide around each other. Definite volume, takes the shape of its container.
+  * **Gas**: Particles fly far apart with high energy, expanding to completely fill any container.
+* **Density & Properties**: Matter can be identified by its color, particle texture (crystals vs. powder), water solubility, electrical conductivity, and density ($\\text{Density} = \\frac{\\text{Mass}}{\\text{Volume}}$).
 """,
-        "example": """
-* **Density Tower Layering**:
-  * Rubbing Alcohol ($0.79\text{ g/mL}$) floats on top.
-  * Fresh Water ($1.00\text{ g/mL}$) sits in the middle.
-  * Corn Syrup ($1.38\text{ g/mL}$) sinks to the bottom.
-""",
-        "trap": "Don't assume all metals are magnetic! Copper, aluminum, gold, and brass do NOT stick to magnets.",
+        "example": "A water molecule model shows 1 central Oxygen atom bonded to 2 smaller Hydrogen atoms. Adding another atom creates a completely different molecule!",
+        "trap": "A hand lens can show sand grains or salt crystals, but it can NEVER magnify enough to see individual atoms or molecules!",
     },
     "Changes in Matter": {
         "title": "Physical vs. Chemical Changes & Conservation of Mass",
         "concept": """
-### 👩‍🏫 Unit 2: Changes in Matter
-* **Physical Change**: Changes shape, size, or state of matter without creating a new chemical substance (e.g., melting ice, dissolving sugar, tearing paper). These are generally reversible.
-* **Chemical Change**: Reactants rearrange chemically into brand-new substances with new properties (e.g., rusting, baking, burning, vinegar + baking soda).
-* **Signs of a Chemical Reaction**:
-  1. Spontaneous gas bubble formation without boiling.
-  2. Precipitate formation (insoluble solid appearing from two clear liquids).
-  3. Unexpected color shift.
-  4. Temperature changes without external heat (exothermic releases heat; endothermic absorbs heat).
-* **Law of Conservation of Mass**: Matter is never created or destroyed. In closed systems, initial mass equals final mass.
+### 👩‍🏫 Unit 2: Physical vs. Chemical Changes
+* **Physical Change**: Changes in shape, size, texture, or state without creating a new substance. (e.g., melting ice, boiling water, dissolving salt, rolling dough, slicing peppers).
+* **Chemical Change**: Rearranges atoms to form completely new substances with different chemical properties.
+* **Key Clues of a Chemical Reaction**:
+  1. Spontaneous formation of gas bubbles (not from boiling).
+  2. Precipitate formation (a new solid formed by mixing clear liquids).
+  3. Change in temperature (exothermic releases heat; endothermic absorbs heat).
+  4. Noticeable color change or new odor.
+* **Conservation of Mass**: In any closed system, mass is never created or destroyed. If mass decreases in an open container, gas escaped into the room!
 """,
-        "example": """
-* **Conservation in a Sealed Flask**:
-  * Empty flask & balloon: $60\text{ g}$
-  * Vinegar: $75\text{ g}$
-  * Baking soda: $15\text{ g}$
-  * Total mass before reaction $= 60 + 75 + 15 = 150\text{ g}$.
-  * Total mass after reaction (sealed) $= \mathbf{150\text{ g}}$.
-""",
-        "trap": "In an open container, gas produced escapes into the surrounding air. The mass appears to decrease on the scale, but the atoms were not destroyed!",
+        "example": "Mixing baking soda and vinegar produces bubbling carbon dioxide gas. If done in an open beaker, the mass drops because the gas escapes into the air.",
+        "trap": "Condensation on the outside of a cold glass is NOT a leak or chemical reaction—it is invisible water vapor from the warm air cooling into liquid droplets!",
     },
     "Earth's Systems": {
         "title": "Earth's Four Interacting Spheres",
-        "concept": """
-### 👩‍🏫 Earth's Spheres
-* **Geosphere**: Solid rock, minerals, soil, mountains, and continental crust.
-* **Hydrosphere**: All liquid and frozen water (oceans, lakes, rivers, groundwater).
-* **Atmosphere**: Blanket of air and weather gases surrounding the planet.
-* **Biosphere**: All living organisms (plants, animals, fungi, bacteria).
-""",
-        "example": "A rushing river (Hydrosphere) slowly carves a deep rock canyon (Geosphere).",
-        "trap": "Clouds are liquid water droplets or ice crystals suspended in air—they belong to the Hydrosphere interacting with the Atmosphere.",
+        "concept": "Geosphere (solid rock/earth), Hydrosphere (liquid/frozen water), Atmosphere (air/gases), and Biosphere (all living organisms).",
+        "example": "Rain from the atmosphere watering trees in the biosphere.",
+        "trap": "Water vapor in the air belongs to the Hydrosphere interacting within the Atmosphere.",
     },
     "Earth's Water": {
-        "title": "Earth's Global Water Distribution",
-        "concept": """
-### 👩‍🏫 Water Reservoir Breakdown
-* **97% Saltwater**: Found in oceans and seas.
-* **3% Freshwater**:
-  * **~68–69%** locked up in solid glaciers and polar ice caps.
-  * **~30%** stored in underground aquifers.
-  * **Less than 1%** accessible surface water in lakes, rivers, and the atmosphere.
-""",
-        "example": "Over two-thirds of all freshwater on Earth is unavailable as drinking water because it is frozen in ice caps.",
-        "trap": "Rivers and lakes make up less than 1% of total freshwater, not the majority!",
+        "title": "Global Water Reservoirs",
+        "concept": "97% of Earth's water is salt ocean water. Of the remaining 3% freshwater, ~68% is frozen in glaciers and polar ice caps.",
+        "example": "Less than 1% of all water on Earth is liquid freshwater available for human use.",
+        "trap": "Rivers and lakes make up less than 1% of freshwater, not the majority.",
     },
     "Patterns in Space": {
-        "title": "Earth Cycles, Sun Angles, and Star Brightness",
-        "concept": """
-### 👩‍🏫 Celestial Patterns
-* **Earth's Rotation (24 hours)**: Causes day and night and the apparent motion of the Sun. Lower Sun angles in early morning/late afternoon cast long shadows; midday Sun casts the shortest shadows.
-* **Earth's Revolution (365.25 days)**: Causes different constellations to appear during different seasons.
-* **Apparent Star Brightness**: A star's brightness to observers on Earth depends on both its actual energy output and its distance from Earth.
-""",
-        "example": "A nearby dim star can appear brighter in our night sky than a distant supergiant star.",
-        "trap": "Shadows do not change size because the Sun gets closer; they change because Earth's rotation alters the angle of incoming sunlight.",
+        "title": "Sun Angles, Shadows, and Cycles",
+        "concept": "Earth's daily 24-hour rotation causes apparent Sun movement and shadow length changes (longest at sunrise/sunset, shortest at noon).",
+        "example": "A flagpole casts its shortest shadow at solar noon when the Sun is at its highest angle.",
+        "trap": "Shadows do not change size because the Sun gets physically closer, but because the angle of light changes.",
     },
     "Matter & Energy in Ecosystems": {
-        "title": "Energy Flow & Nutrient Cycling",
-        "concept": """
-### 👩‍🏫 Living Systems
-* **Producers**: Plants capture solar energy and use carbon dioxide and water to produce glucose during photosynthesis.
-* **Consumers**: Animals that eat plants or other animals for energy.
-* **Decomposers**: Fungi and bacteria that break down dead matter, returning nutrients to the soil.
-* **Plant Mass Source**: Trees gain their dry mass from carbon dioxide gas absorbed from the air, not from consuming soil.
-""",
-        "example": "Sunlight $\\rightarrow$ Kelp (Producer) $\\rightarrow$ Sea Urchin (Consumer) $\\rightarrow$ Sea Otter (Apex Predator).",
-        "trap": "Soil provides minerals and water, but the structural carbon atoms making up plant wood come from the air!",
+        "title": "Energy Pyramids & Nutrient Cycling",
+        "concept": "Producers convert solar energy and air (CO2) into glucose via photosynthesis. Decomposers recycle matter into soil.",
+        "example": "Oak tree wood mass comes from carbon dioxide gas absorbed from the air, NOT from eating dirt.",
+        "trap": "Plants take in water and soil nutrients through roots, but their dry structural mass is built from carbon in the air.",
     },
 }
 
 # ==============================================================================
-# 3. 2D & 3D IN-MEMORY DIAGRAM GENERATORS
+# 3. DYNAMIC VECTOR DIAGRAM GENERATOR (ALL LABELS IN HIGH-CONTRAST RED)
 # ==============================================================================
 def render_cylinder(ax, x_offset, volume, max_vol, label):
     cyl_w, cyl_h = 1.6, 5.5
@@ -289,7 +255,7 @@ def render_cylinder(ax, x_offset, volume, max_vol, label):
             cyl_w + 1.1,
             0.45,
             facecolor="#e0e0e0",
-            edgecolor="#222",
+            edgecolor="#64748b",
             lw=2,
         )
     )
@@ -307,7 +273,7 @@ def render_cylinder(ax, x_offset, volume, max_vol, label):
             cyl_w,
             cyl_h,
             facecolor="none",
-            edgecolor="#222",
+            edgecolor="#94a3b8",
             lw=2.5,
         )
     )
@@ -318,7 +284,7 @@ def render_cylinder(ax, x_offset, volume, max_vol, label):
                 cyl_w,
                 0.25,
                 facecolor="#5f7182",
-                edgecolor="#222",
+                edgecolor="#94a3b8",
                 lw=1.5,
             )
         )
@@ -328,19 +294,20 @@ def render_cylinder(ax, x_offset, volume, max_vol, label):
             cyl_w,
             0.25,
             facecolor="none",
-            edgecolor="#222",
+            edgecolor="#94a3b8",
             lw=2,
         )
     )
     for i in range(1, 6):
         y = 0.2 + (cyl_h - 0.5) * (i / 5.0)
-        ax.plot([x_offset, x_offset + 0.35], [y, y], color="#222", lw=1.5)
+        ax.plot([x_offset, x_offset + 0.35], [y, y], color=LABEL_COLOR, lw=1.8)
         ax.text(
-            offset := x_offset + 0.45,
+            x_offset + 0.45,
             y - 0.1,
             f"{int((max_vol / 5) * i)}",
-            fontsize=8,
+            fontsize=9,
             weight="bold",
+            color=LABEL_COLOR,
         )
     ax.text(
         x_offset + cyl_w / 2,
@@ -348,45 +315,155 @@ def render_cylinder(ax, x_offset, volume, max_vol, label):
         label,
         ha="center",
         weight="bold",
-        fontsize=14,
+        fontsize=15,
+        color=LABEL_COLOR,
     )
 
 
 def generate_diagram(diagram_type: str, params: dict) -> io.BytesIO:
     fig, ax = plt.subplots(figsize=(6.5, 3.8), dpi=130)
 
-    if diagram_type == "graduated_cylinders":
-        render_cylinder(ax, 1.5, params["vol_a"], params["max_vol"], params["label_a"])
-        render_cylinder(ax, 5.2, params["vol_b"], params["max_vol"], params["label_b"])
+    if diagram_type == "molecule_model":
+        central_name = params.get("central_name", "Oxygen")
+        central_color = params.get("central_color", "#334155")
+        attached_name = params.get("attached_name", "Hydrogen")
+        attached_color = params.get("attached_color", "#cbd5e1")
+        count = params.get("attached_count", 2)
+        bond_type = params.get("bond_type", "overlap")
+        angle_spread = params.get("angle_spread", "bent")
+
+        cx, cy, cr = 4.0, 2.2, 1.05
+
+        if count == 2:
+            if angle_spread == "linear":
+                angles = [180, 0]
+                dist = 2.4 if bond_type == "sticks" else 1.55
+            else:
+                angles = [220, 320]
+                dist = 2.1 if bond_type == "sticks" else 1.45
+        elif count == 3:
+            angles = [210, 270, 330]
+            dist = 2.0 if bond_type == "sticks" else 1.45
+        elif count == 4:
+            angles = [90, 180, 270, 0]
+            dist = 2.1 if bond_type == "sticks" else 1.45
+        else:
+            angles = [220, 320]
+            dist = 2.0
+
+        if bond_type == "sticks":
+            for ang in angles:
+                rad = math.radians(ang)
+                tx = cx + dist * math.cos(rad)
+                ty = cy + dist * math.sin(rad)
+                ax.plot([cx, tx], [cy, ty], color="#1e293b", lw=8, solid_capstyle="round", zorder=1)
+                ax.plot([cx, tx], [cy, ty], color="#94a3b8", lw=4, solid_capstyle="round", zorder=2)
+
+        ax.add_patch(patches.Circle((cx, cy), cr, facecolor=central_color, edgecolor="#94a3b8", lw=2, zorder=4))
+        ax.text(
+            cx,
+            cy,
+            central_name,
+            ha="center",
+            va="center",
+            color=LABEL_COLOR,
+            weight="bold",
+            fontsize=12,
+            zorder=6,
+        )
+
+        ar = 0.8 if bond_type == "sticks" else 0.9
+        for ang in angles:
+            rad = math.radians(ang)
+            tx = cx + dist * math.cos(rad)
+            ty = cy + dist * math.sin(rad)
+            ax.add_patch(patches.Circle((tx, ty), ar, facecolor=attached_color, edgecolor="#94a3b8", lw=2, zorder=5))
+            ax.text(
+                tx,
+                ty,
+                attached_name,
+                ha="center",
+                va="center",
+                color=LABEL_COLOR,
+                weight="bold",
+                fontsize=10,
+                zorder=7,
+            )
+
+        ax.set_xlim(1.0, 7.0)
+        ax.set_ylim(0.0, 4.4)
+
+    elif diagram_type == "particle_flasks":
+        offsets = [1.5, 4.2, 6.9]
+        labels = ["A", "B", "C"]
+        for idx, ox in enumerate(offsets):
+            pts = [[ox - 1.1, 0.4], [ox + 1.1, 0.4], [ox + 0.3, 2.5], [ox + 0.3, 3.2], [ox - 0.3, 3.2], [ox - 0.3, 2.5]]
+            ax.add_patch(patches.Polygon(pts, closed=True, facecolor="#f8fafc", edgecolor="#94a3b8", lw=2))
+            ax.add_patch(patches.Rectangle((ox - 0.35, 3.15), 0.7, 0.25, facecolor="#475569", edgecolor="#64748b", lw=1.5))
+            ax.text(ox, -0.2, labels[idx], ha="center", weight="bold", fontsize=15, color=LABEL_COLOR)
+
+            if idx == 0:  # Solid
+                for row in range(4):
+                    for col in range(6):
+                        px = ox - 0.65 + col * 0.26
+                        py = 0.55 + row * 0.25
+                        ax.add_patch(patches.Circle((px, py), 0.1, facecolor="#334155", edgecolor="#64748b"))
+            elif idx == 1:  # Liquid
+                random.seed(42)
+                for _ in range(20):
+                    px = ox + random.uniform(-0.7, 0.7)
+                    py = random.uniform(0.5, 1.2)
+                    ax.add_patch(patches.Circle((px, py), 0.1, facecolor="#64748b", edgecolor="#94a3b8"))
+            elif idx == 2:  # Gas
+                gas_pts = [
+                    (ox - 0.4, 0.7, 0.1, 0.2),
+                    (ox + 0.5, 1.1, -0.2, 0.1),
+                    (ox - 0.2, 1.7, 0.1, -0.2),
+                    (ox + 0.3, 2.3, -0.1, 0.2),
+                    (ox, 2.8, 0.2, 0.1),
+                ]
+                for gx, gy, dx, dy in gas_pts:
+                    ax.add_patch(patches.Circle((gx, gy), 0.11, facecolor="#94a3b8", edgecolor="#cbd5e1"))
+                    ax.plot([gx, gx - dx], [gy, gy - dy], color="#cbd5e1", lw=2)
+
+        ax.set_xlim(0, 8.5)
+        ax.set_ylim(-0.5, 3.7)
+
+    elif diagram_type == "particle_motion":
+        ax.add_patch(patches.Circle((2.5, 2.0), 1.6, facecolor="#f8fafc", edgecolor="#94a3b8", lw=2.5))
+        ax.text(2.5, -0.1, "Before", ha="center", weight="bold", fontsize=13, color=LABEL_COLOR)
+        ax.add_patch(patches.Circle((6.5, 2.0), 1.6, facecolor="#f8fafc", edgecolor="#94a3b8", lw=2.5))
+        ax.text(6.5, -0.1, "After", ha="center", weight="bold", fontsize=13, color=LABEL_COLOR)
+
+        random.seed(101)
+        for ox, speed_trails in [(2.5, False), (6.5, True)]:
+            for _ in range(16):
+                ang = random.uniform(0, 2 * math.pi)
+                rad = random.uniform(0.2, 1.25)
+                px, py = ox + rad * math.cos(ang), 2.0 + rad * math.sin(ang)
+                ax.add_patch(patches.Circle((px, py), 0.11, facecolor="#475569", edgecolor="#64748b"))
+                if speed_trails:
+                    ax.plot([px - 0.2, px - 0.05], [py - 0.2, py - 0.05], color="#f97316", lw=2)
+                    ax.plot([px + 0.05, px + 0.2], [py + 0.05, py + 0.2], color="#f97316", lw=2)
+                else:
+                    arc = patches.Arc((px, py), 0.35, 0.35, angle=0, theta1=20, theta2=120, color="#94a3b8", lw=1.5)
+                    ax.add_patch(arc)
+
+        ax.set_xlim(0.5, 8.5)
+        ax.set_ylim(-0.5, 4.0)
+
+    elif diagram_type == "graduated_cylinders":
+        for ox, vol, lbl in [(1.8, params["vol_a"], params["label_a"]), (5.4, params["vol_b"], params["label_b"])]:
+            render_cylinder(ax, ox, vol, params["max_vol"], lbl)
         ax.set(xlim=(0, 8.5), ylim=(-1.2, 6.5))
 
     elif diagram_type == "density_column":
-        ax.add_patch(
-            patches.Rectangle((2.5, 0.5), 3.0, 5.0, facecolor="none", edgecolor="#222", lw=3)
-        )
+        ax.add_patch(patches.Rectangle((2.5, 0.5), 3.0, 5.0, facecolor="none", edgecolor="#94a3b8", lw=3))
         colors = ["#f39c12", "#3498db", "#27ae60"]
-        labels = params.get(
-            "layers", ["Top (0.8 g/mL)", "Middle (1.0 g/mL)", "Bottom (1.3 g/mL)"]
-        )
+        labels = params.get("layers", ["Top (0.8 g/mL)", "Middle (1.0 g/mL)", "Bottom (1.3 g/mL)"])
         for i in range(3):
-            ax.add_patch(
-                patches.Rectangle(
-                    (2.5, 0.5 + i * 1.6),
-                    3.0,
-                    1.6,
-                    facecolor=colors[i],
-                    alpha=0.6,
-                    edgecolor="#333",
-                )
-            )
-            ax.text(
-                4.0,
-                1.3 + i * 1.6,
-                labels[i],
-                ha="center",
-                weight="bold",
-                fontsize=11,
-            )
+            ax.add_patch(patches.Rectangle((2.5, 0.5 + i * 1.6), 3.0, 1.6, facecolor=colors[i], alpha=0.6, edgecolor="#94a3b8"))
+            ax.text(4.0, 1.3 + i * 1.6, labels[i], ha="center", weight="bold", fontsize=12, color=LABEL_COLOR)
         ax.set(xlim=(1, 8), ylim=(0, 6.5))
 
     elif diagram_type == "flask_balloon":
@@ -395,7 +472,7 @@ def generate_diagram(diagram_type: str, params: dict) -> io.BytesIO:
                 [[3.5, 0.5], [6.5, 0.5], [5.5, 3.2], [5.5, 4.0], [4.5, 4.0], [4.5, 3.2]],
                 closed=True,
                 facecolor="#eef2f7",
-                edgecolor="#222",
+                edgecolor="#94a3b8",
                 lw=2.5,
             )
         )
@@ -407,69 +484,30 @@ def generate_diagram(diagram_type: str, params: dict) -> io.BytesIO:
             )
         )
         if params.get("expanded", True):
-            ax.add_patch(
-                patches.Ellipse(
-                    (5.0, 5.0),
-                    width=2.4,
-                    height=2.2,
-                    facecolor="#ff6b6b",
-                    edgecolor="#c92a2a",
-                    lw=2,
-                )
-            )
-            ax.text(
-                5.0,
-                5.0,
-                "Gas Trapped",
-                ha="center",
-                va="center",
-                color="white",
-                weight="bold",
-            )
+            ax.add_patch(patches.Ellipse((5.0, 5.0), width=2.4, height=2.2, facecolor="#ff6b6b", edgecolor="#c92a2a", lw=2))
+            ax.text(5.0, 5.0, "Gas Trapped", ha="center", va="center", color="white", weight="bold")
         else:
-            ax.add_patch(
-                patches.Ellipse(
-                    (5.0, 4.3),
-                    width=0.8,
-                    height=0.6,
-                    facecolor="#ff6b6b",
-                    edgecolor="#c92a2a",
-                    lw=2,
-                )
-            )
-        ax.text(
-            5.0,
-            -0.2,
-            f"Total Mass = {params['total_mass']} g",
-            ha="center",
-            weight="bold",
-            fontsize=12,
-        )
+            ax.add_patch(patches.Ellipse((5.0, 4.3), width=0.8, height=0.6, facecolor="#ff6b6b", edgecolor="#c92a2a", lw=2))
+        ax.text(5.0, -0.2, f"Total Mass = {params['total_mass']} g", ha="center", weight="bold", fontsize=13, color=LABEL_COLOR)
         ax.set(xlim=(1, 9), ylim=(-0.8, 6.5))
 
     elif diagram_type == "pan_balance":
-        ax.plot([2, 8], [2.5, 2.5], color="#333", lw=4)
-        ax.add_patch(
-            patches.Polygon(
-                [[4.5, 0.5], [5.5, 0.5], [5.0, 2.5]],
-                closed=True,
-                facecolor="#7f8c8d",
-            )
-        )
-        ax.plot([3, 3], [1.5, 2.5], color="#555", lw=2)
-        ax.plot([2.2, 3.8], [1.5, 1.5], color="#222", lw=3)
-        ax.text(3, 1.8, params.get("left_label", "Object A"), ha="center", weight="bold")
-        ax.plot([7, 7], [1.5, 2.5], color="#555", lw=2)
-        ax.plot([6.2, 7.8], [1.5, 1.5], color="#222", lw=3)
-        ax.text(7, 1.8, params.get("right_label", "Object B"), ha="center", weight="bold")
+        ax.plot([2, 8], [2.5, 2.5], color="#94a3b8", lw=4)
+        ax.add_patch(patches.Polygon([[4.5, 0.5], [5.5, 0.5], [5.0, 2.5]], closed=True, facecolor="#7f8c8d"))
+        ax.plot([3, 3], [1.5, 2.5], color="#94a3b8", lw=2)
+        ax.plot([2.2, 3.8], [1.5, 1.5], color="#94a3b8", lw=3)
+        ax.text(3, 1.8, params.get("left_label", "Object A"), ha="center", weight="bold", color=LABEL_COLOR, fontsize=12)
+        ax.plot([7, 7], [1.5, 2.5], color="#94a3b8", lw=2)
+        ax.plot([6.2, 7.8], [1.5, 1.5], color="#94a3b8", lw=3)
+        ax.text(7, 1.8, params.get("right_label", "Object B"), ha="center", weight="bold", color=LABEL_COLOR, fontsize=12)
         ax.set(xlim=(1, 9), ylim=(0, 3.5))
 
     elif diagram_type == "shadow_diagram":
         sun_x, sun_y = params["sun_x"], params["sun_y"]
         pole_x, pole_h = 5.0, 3.5
-        ax.plot([0, 10], [0, 0], color="#333", lw=3)
-        ax.plot([pole_x, pole_x], [0, pole_h], color="#444", lw=4)
-        ax.text(pole_x, -0.4, "Flagpole", ha="center", weight="bold", fontsize=10)
+        ax.plot([0, 10], [0, 0], color="#94a3b8", lw=3)
+        ax.plot([pole_x, pole_x], [0, pole_h], color="#94a3b8", lw=4)
+        ax.text(pole_x, -0.4, "Flagpole", ha="center", weight="bold", fontsize=11, color=LABEL_COLOR)
         slope = (pole_h - sun_y) / (pole_x - sun_x)
         shadow_tip_x = max(0.5, min(9.5, pole_x - (pole_h / slope)))
         ax.plot([pole_x, shadow_tip_x], [0, 0], color="#666", lw=7, solid_capstyle="round")
@@ -480,7 +518,8 @@ def generate_diagram(diagram_type: str, params: dict) -> io.BytesIO:
             f"Sun ({params['time_label']})",
             ha="center",
             weight="bold",
-            fontsize=10,
+            fontsize=11,
+            color=LABEL_COLOR,
         )
         ax.set(xlim=(0, 10), ylim=(-0.8, 6.5))
 
@@ -533,28 +572,272 @@ def check_user_answer(user_input, q: dict) -> bool:
 
 
 # ==============================================================================
-# 4. UNIT 1: PROPERTIES OF MATTER GENERATORS
+# 4. UNIT 1: PROPERTIES OF MATTER GENERATORS (WITH COMPLETE MOLECULE SUITE)
 # ==============================================================================
+def u1_molecule_model_advantages():
+    molecules = [
+        {"name": "water", "formula": "H2O", "c_name": "Oxygen", "c_col": "#334155", "a_name": "Hydrogen", "a_col": "#cbd5e1", "cnt": 2, "bond": "overlap", "spread": "bent"},
+        {"name": "carbon dioxide", "formula": "CO2", "c_name": "Carbon", "c_col": "#1e293b", "a_name": "Oxygen", "a_col": "#f87171", "cnt": 2, "bond": "sticks", "spread": "linear"},
+        {"name": "methane", "formula": "CH4", "c_name": "Carbon", "c_col": "#1e293b", "a_name": "Hydrogen", "a_col": "#cbd5e1", "cnt": 4, "bond": "sticks", "spread": "tetrahedral"},
+        {"name": "ammonia", "formula": "NH3", "c_name": "Nitrogen", "c_col": "#2563eb", "a_name": "Hydrogen", "a_col": "#cbd5e1", "cnt": 3, "bond": "sticks", "spread": "pyramidal"},
+        {"name": "sulfur dioxide", "formula": "SO2", "c_name": "Sulfur", "c_col": "#eab308", "a_name": "Oxygen", "a_col": "#f87171", "cnt": 2, "bond": "overlap", "spread": "bent"},
+        {"name": "nitrogen dioxide", "formula": "NO2", "c_name": "Nitrogen", "c_col": "#2563eb", "a_name": "Oxygen", "a_col": "#f87171", "cnt": 2, "bond": "overlap", "spread": "bent"},
+    ]
+    m = random.choice(molecules)
+    student = random.choice(["Lisa", "Maya", "Emma", "Claire", "Sofia"])
+
+    correct = "The model shows parts of the molecule that are too small to see with human eyes."
+    distractors = [
+        f"The model proves that {m['name']} naturally exists as a solid, liquid, and gas simultaneously.",
+        f"The model directly shows all observable liquid properties of {m['name']}.",
+        f"The model shows how {m['name']} actively reacts with every other chemical element.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_molecule_advantage",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "molecule_model",
+        "diagram_params": {
+            "central_name": m["c_name"],
+            "central_color": m["c_col"],
+            "attached_name": m["a_name"],
+            "attached_color": m["a_col"],
+            "attached_count": m["cnt"],
+            "bond_type": m["bond"],
+            "angle_spread": m["spread"],
+        },
+        "scenario": f"{student} builds a science model of a {m['name']} molecule ({m['formula']}).",
+        "question": "Which statement best describes an advantage of using this model?",
+        "hint": "Think about why scientists build models of atoms. Can we see atoms without models?",
+        "answer": ans,
+        "explanation": "Atoms and molecules are microscopic particles. Physical and computer models allow us to visualize structures that are far too small to see directly.",
+    }
+
+
+def u1_molecule_alteration_compound():
+    molecules = [
+        {"base": "water (H2O)", "added": "oxygen atom", "new": "hydrogen peroxide (H2O2)", "c_name": "Oxygen", "c_col": "#334155", "a_name": "Hydrogen", "a_col": "#cbd5e1", "cnt": 2, "bond": "overlap", "spread": "bent"},
+        {"base": "carbon monoxide (CO)", "added": "oxygen atom", "new": "carbon dioxide (CO2)", "c_name": "Carbon", "c_col": "#1e293b", "a_name": "Oxygen", "a_col": "#f87171", "cnt": 2, "bond": "sticks", "spread": "linear"},
+        {"base": "sulfur monoxide (SO)", "added": "oxygen atom", "new": "sulfur dioxide (SO2)", "c_name": "Sulfur", "c_col": "#eab308", "a_name": "Oxygen", "a_col": "#f87171", "cnt": 2, "bond": "overlap", "spread": "bent"},
+    ]
+    m = random.choice(molecules)
+    student = random.choice(["Lisa", "Kevin", "Delaney", "Jamal"])
+    correct = "The model now shows a completely different kind of molecule with distinct chemical properties."
+    distractors = [
+        "The model simply shows a slightly larger, stretched version of the original molecule.",
+        "The model shows that the original molecule can change its state of matter from liquid to solid.",
+        "The model shows that individual atoms have grown larger in physical size.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_molecule_alteration",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "molecule_model",
+        "diagram_params": {
+            "central_name": m["c_name"],
+            "central_color": m["c_col"],
+            "attached_name": m["a_name"],
+            "attached_color": m["a_col"],
+            "attached_count": m["cnt"],
+            "bond_type": m["bond"],
+            "angle_spread": m["spread"],
+        },
+        "scenario": f"{student} modifies her model of {m['base']} by adding another circle to represent an extra {m['added']}.",
+        "question": "How does adding another atom change what the scientific model represents?",
+        "hint": "When you add another atom to a chemical formula, does it stay the same substance or become a new compound?",
+        "answer": ans,
+        "explanation": "Changing the number or arrangement of bonded atoms creates a completely different chemical compound with entirely new properties.",
+    }
+
+
+def u1_condensation_invisible_matter():
+    student = random.choice(["Jin", "Anya", "Keisha", "Liam"])
+    drink = random.choice(["ice water", "cold lemonade", "iced tea"])
+    correct = "Water droplets will form and accumulate on the dry outside surface of the cold glass."
+    distractors = [
+        "The ice inside the glass will gradually melt into liquid water.",
+        "Liquid water will slowly seep through the microscopic pores of the solid glass walls.",
+        "Gas from the room will enter the liquid and turn into floating ice cubes.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_condensation_matter",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": (
+            f"{student} wants to demonstrate evidence that invisible matter exists in the surrounding air. "
+            f"He knows that water vapor is an invisible gas in the atmosphere that condenses into liquid when cooled. "
+            f"He places a cold glass of {drink} on an outdoor picnic table on a warm sunny afternoon and observes it."
+        ),
+        "question": "Which observation provides direct evidence of invisible water matter existing in the surrounding air?",
+        "hint": "Where did the liquid beads on the OUTSIDE of the glass come from? The glass didn't leak!",
+        "answer": ans,
+        "explanation": "Invisible water vapor gas floating in the warm room air touches the cold glass surface, loses thermal energy, and condenses into liquid water droplets.",
+    }
+
+
+def u1_hand_lens_capabilities():
+    student = random.choice(["Karen", "Delaney", "Evan", "Aidan"])
+    object_tested = random.choice(["granite rock", "sandstone sample", "fine sugar crystal"])
+    correct = "The sample is made of individual grains, crystals, or flecks of different colors."
+    distractors = [
+        "The sample is composed of individual microscopic atoms bonded together.",
+        "The sample contains distinct arrangements of protons, neutrons, and electrons.",
+        "The exact gravitational weight of the sample in kilograms.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_hand_lens",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"{student} uses a standard laboratory hand lens (magnifying glass) to inspect a {object_tested}.",
+        "question": "Which scientific observation could be directly made using a hand lens?",
+        "hint": "A hand lens magnifies small visible details (like grains), but can it magnify millions of times to see atoms?",
+        "answer": ans,
+        "explanation": "Hand lenses magnify small visible physical textures (like mineral grains or crystals), but cannot resolve microscopic atoms or molecules.",
+    }
+
+
+def u1_flask_particle_states():
+    student = random.choice(["Evan", "Caroline", "Jamal", "Susannah"])
+    target_state = random.choice(["liquid", "gas", "solid"])
+    if target_state == "solid":
+        correct_letter = "A"
+        desc = "tightly packed into an organized, rigid grid holding its own shape"
+    elif target_state == "liquid":
+        correct_letter = "B"
+        desc = "resting in contact at the bottom while free to slide and take the container's shape"
+    else:
+        correct_letter = "C"
+        desc = "widely spaced apart and bouncing rapidly to fill the entire volume"
+
+    opts = ["A", "B", "C"]
+    return {
+        "template_id": "u1_flask_states",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "particle_flasks",
+        "diagram_params": {},
+        "scenario": f"The illustration displays three sealed flasks (A, B, and C) modeling how particles behave in the three states of matter. {student} has a sample that is in **{target_state}** form.",
+        "question": f"Which model (A, B, or C) correctly represents {student}'s {target_state} sample?",
+        "hint": "Solids form neat grids at the bottom, liquids slide loosely at the bottom, and gases fly all over the flask.",
+        "answer": correct_letter,
+        "explanation": f"Flask {correct_letter} models a {target_state} because particles are {desc}.",
+    }
+
+
+def u1_kinetic_thermal_motion():
+    student = random.choice(["Marcus", "Elena", "Kevin", "Zoe"])
+    correct = "Thermal heat energy was added to the water, causing particles to move faster."
+    distractors = [
+        "The water was frozen into a solid block of crystalline ice.",
+        "The container was placed inside a vacuum chamber to slow particle motion.",
+        "The water was gently poured into a smaller graduated cylinder.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_thermal_motion",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "diagram": "particle_motion",
+        "diagram_params": {},
+        "scenario": f"During a science investigation, {student} models liquid water particles in an observation chamber 'Before' and 'After' a procedure.",
+        "question": "Based on the motion marks and particle spacing shown in the diagram, what most likely happened during the investigation?",
+        "hint": "Look at the 'After' diagram: notice the extra motion streaks showing particles moving with much higher speed.",
+        "answer": ans,
+        "explanation": "Adding thermal energy (heat) increases the kinetic energy of particles, causing them to vibrate, slide, and collide much faster.",
+    }
+
+
+def u1_mineral_diagnostic_matrix():
+    samples = [
+        {"name": "Sand (Quartz)", "texture": "grainy", "color": "tan", "sol": "no", "is_target": True},
+        {"name": "Baking Soda", "texture": "soft and silky", "color": "white", "sol": "yes", "is_target": False},
+        {"name": "Coarse Salt", "texture": "rough crystals", "color": "white", "sol": "yes", "is_target": False},
+        {"name": "Chalk Powder", "texture": "soft powder", "color": "white", "sol": "no", "is_target": False},
+    ]
+    random.shuffle(samples)
+    labels = ["Sample W", "Sample X", "Sample Y", "Sample Z"]
+    target_idx = [i for i, s in enumerate(samples) if s["is_target"]][0]
+
+    table_data = {
+        "Sample": labels,
+        "Texture": [s["texture"] for s in samples],
+        "Color": [s["color"] for s in samples],
+        "Soluble in Water?": [s["sol"] for s in samples],
+    }
+
+    opts = labels
+    return {
+        "template_id": "u1_mineral_matrix",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "table": table_data,
+        "scenario": "A 5th-grade science team investigates unknown solid samples. They record their physical property observations in the data table.",
+        "question": "A student knows that ordinary playground sand is tan, grainy, and does not dissolve in water. Which sample is most likely sand?",
+        "hint": "Check the rows in the table: find the sample that is both 'grainy' and answered 'no' to water solubility.",
+        "answer": labels[target_idx],
+        "explanation": f"{labels[target_idx]} matches all properties of sand: tan color, grainy texture, and insoluble in water.",
+    }
+
+
+def u1_liquid_transfer_beakers():
+    v = random.choice([50, 75, 100])
+    correct = "The liquid will change its shape to match the larger beaker, but its volume will remain exactly the same."
+    distractors = [
+        "The volume of the liquid will expand to completely fill the larger beaker from top to bottom.",
+        "The liquid will retain its exact original shape without spreading across the larger bottom.",
+        "The liquid will immediately evaporate into a gas because the beaker has a larger surface area.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_liquid_transfer",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A student pours exactly {v} mL of clear liquid from a narrow 150 mL beaker into a wide 500 mL beaker.",
+        "question": "What will happen to the shape and volume of the liquid in the new beaker?",
+        "hint": "Liquids take the shape of their container, but does pouring liquid create or destroy milliliters of volume?",
+        "answer": ans,
+        "explanation": "Liquids have a definite volume but no definite shape. They adapt to the shape of whatever container holds them while volume stays constant.",
+    }
+
+
+def u1_cooking_tool_conductivity():
+    correct = "The silicone or rubber grip handle, because it is a thermal insulator that protects hands from heat."
+    distractors = [
+        "The wide stainless steel spatula blade, because metal prevents heat from transferring into food.",
+        "The thin metal connecting neck, because metals are designed to block heat flow.",
+        "Every part of the cooking tool conducts heat identically.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u1_spatula_insulator",
+        "topic": "Properties of Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": "Engineers design cooking tools using multiple materials with different thermal properties. Consider a kitchen spatula with a metal blade and a silicone-coated rubber handle.",
+        "question": "Which area of the cooking tool is engineered using a material that does NOT conduct heat very well, and why?",
+        "hint": "Where do you hold a hot cooking tool? You want that part to insulate against heat!",
+        "answer": ans,
+        "explanation": "Handles are manufactured from thermal insulators (rubber, silicone, or wood) to prevent heat from traveling to the user's hand.",
+    }
+
+
 def u1_measuring_tools():
     tools = [
-        (
-            "pan balance",
-            "mass in grams",
-            "graduated cylinder",
-            "liquid volume in milliliters",
-        ),
-        (
-            "graduated cylinder",
-            "volume in milliliters",
-            "spring scale",
-            "weight in newtons",
-        ),
-        (
-            "metric ruler",
-            "solid volume in cubic centimeters",
-            "thermometer",
-            "temperature in degrees Celsius",
-        ),
+        ("pan balance", "mass in grams", "graduated cylinder", "liquid volume in milliliters"),
+        ("graduated cylinder", "volume in milliliters", "spring scale", "weight in newtons"),
+        ("metric ruler", "solid volume in cubic centimeters", "thermometer", "temperature in degrees Celsius"),
     ]
     pick = random.choice(tools)
     t_tool, t_prop, w_tool, w_prop = pick
@@ -578,75 +861,12 @@ def u1_measuring_tools():
     }
 
 
-def u1_thermal_conductivity():
-    materials = [
-        (
-            "wooden spoon",
-            "thermal insulator",
-            "wood does not easily permit thermal energy to travel through it",
-        ),
-        (
-            "metal spoon",
-            "thermal conductor",
-            "metals allow thermal energy to transfer through them very quickly",
-        ),
-        (
-            "silicone spatula",
-            "thermal insulator",
-            "silicone resists the flow of heat energy and keeps the handle cool",
-        ),
-    ]
-    name, role, reason = random.choice(materials)
-    soup_temp = random.randint(75, 90)
-    correct = f"{name.capitalize()} is a {role}, because {reason}."
-    other_role = (
-        "thermal conductor" if role == "thermal insulator" else "thermal insulator"
-    )
-    distractors = [
-        f"{name.capitalize()} is a {other_role}, because it easily dissolves into warm liquids over time.",
-        f"{name.capitalize()} is a magnetic material, which completely blocks heat from entering the handle.",
-        f"{name.capitalize()} is a {role}, because it immediately transforms into a gas when heated.",
-    ]
-    opts, ans = helper_shuffle_options(correct, distractors)
-    return {
-        "template_id": "u1_thermal_cond",
-        "topic": "Properties of Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": f"A student leaves a {name} resting inside a pot of hot vegetable soup at {soup_temp}°C for 15 minutes.",
-        "question": f"When touching the handle, which statement correctly explains how thermal energy behaves in the {name}?",
-        "hint": "Does heat flow easily through this material to make it hot (conductor), or does it resist heat (insulator)?",
-        "answer": ans,
-        "explanation": f"{name.capitalize()} is classified as a {role} because {reason}.",
-    }
-
-
 def u1_density_sink_float():
     obj = random.choice([
-        (
-            "solid oak wood block",
-            0.75,
-            "floats near the water surface",
-            "its density is less than 1.0 g/mL",
-        ),
-        (
-            "pure lead sinker",
-            11.34,
-            "sinks rapidly to the bottom",
-            "its density is much greater than 1.0 g/mL",
-        ),
-        (
-            "paraffin wax cube",
-            0.90,
-            "floats mostly submerged",
-            "its density is slightly less than 1.0 g/mL",
-        ),
-        (
-            "glass marble",
-            2.50,
-            "sinks directly to the bottom",
-            "its density is greater than 1.0 g/mL",
-        ),
+        ("solid oak wood block", 0.75, "floats near the water surface", "its density is less than 1.0 g/mL"),
+        ("pure lead sinker", 11.34, "sinks rapidly to the bottom", "its density is much greater than 1.0 g/mL"),
+        ("paraffin wax cube", 0.90, "floats mostly submerged", "its density is slightly less than 1.0 g/mL"),
+        ("glass marble", 2.50, "sinks directly to the bottom", "its density is greater than 1.0 g/mL"),
     ])
     name, density, behavior, reason = obj
     correct = f"It {behavior} because {reason}."
@@ -742,45 +962,6 @@ def u1_solubility_saturation():
     }
 
 
-def u1_particle_state_spacing():
-    states = [
-        (
-            "solid ice cube",
-            "packed tightly in fixed, vibrating positions with a definite shape and volume",
-        ),
-        (
-            "liquid water",
-            "in close contact but able to slide freely past one another, taking the shape of the container",
-        ),
-        (
-            "water vapor gas",
-            "spaced very far apart and moving rapidly in all directions to fill any container",
-        ),
-    ]
-    pick = random.choice(states)
-    name, desc = pick
-    other1 = states[(states.index(pick) + 1) % 3][1]
-    other2 = states[(states.index(pick) + 2) % 3][1]
-    correct = f"Particles are {desc}."
-    distractors = [
-        f"Particles are {other1}.",
-        f"Particles are {other2}.",
-        "Particles have broken down completely into individual protons and ceased movement.",
-    ]
-    opts, ans = helper_shuffle_options(correct, distractors)
-    return {
-        "template_id": "u1_particles",
-        "topic": "Properties of Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": f"A student views a microscopic animation of molecules in a sample of {name}.",
-        "question": f"Which statement accurately describes the arrangement and motion of the particles in the {name}?",
-        "hint": "Solids vibrate in fixed spots, liquids slide around each other, and gases fly far apart.",
-        "answer": ans,
-        "explanation": f"In a {name}, particles are {desc}.",
-    }
-
-
 def u1_gas_has_mass():
     deflated = random.randint(3, 4)
     inflated = deflated + 2
@@ -859,121 +1040,191 @@ def u1_pan_balance_comparison():
     }
 
 
-def u1_electrical_conductors_insulators():
-    setups = [
-        ("copper wire", "lightbulb glows brightly", "electrical conductor"),
-        ("rubber eraser", "lightbulb stays dark", "electrical insulator"),
+# ==============================================================================
+# 5. UNIT 2: CHANGES IN MATTER (EXPANDED DIVERSE GENERATOR BANK)
+# ==============================================================================
+def u2_pizza_recipe_changes():
+    steps = [
+        ("Rolling dough flat with a rolling pin", "Physical change", "it only changes the shape and thickness of the dough"),
+        ("Slicing bell peppers and onions into strips", "Physical change", "it only changes the size of the vegetable pieces"),
+        ("Grating a block of mozzarella cheese into shreds", "Physical change", "it alters the size and form of the solid cheese without making a new substance"),
+        ("Yeast fermenting sugar into bubbling carbon dioxide gas causing dough to rise", "Chemical change", "living yeast produces a new gas substance"),
+        ("Baking raw dough in an oven until it turns into a browned crust", "Chemical change", "heat creates brand-new browned compounds and flavors"),
+        ("Baking cheese until it browns and forms new crisp crusts", "Chemical change", "proteins and sugars chemically react under high heat"),
     ]
-    item, bulb, cat = random.choice(setups)
-    correct = f"The {item} is an {cat} because it {'allows electric current to flow through the circuit' if 'conductor' in cat else 'blocks electric current from flowing'}."
-    other_cat = (
-        "electrical insulator" if "conductor" in cat else "electrical conductor"
-    )
+    pick = random.choice(steps)
+    correct = f"{pick[1]}, because {pick[2]}."
+    wrong_type = "Chemical change" if pick[1] == "Physical change" else "Physical change"
     distractors = [
-        f"The {item} is an {other_cat} because it completely reverses the voltage of the battery.",
-        f"The {item} dissolved in the electric wires and permanently altered the battery terminals.",
-        "All solid materials allow electric current to pass through them with equal efficiency.",
+        f"{wrong_type}, because mass was permanently lost during the step.",
+        f"{wrong_type}, because thermal energy was added.",
+        f"{pick[1]}, because all matter was destroyed during the step.",
     ]
     opts, ans = helper_shuffle_options(correct, distractors)
     return {
-        "template_id": "u1_elec_cond",
-        "topic": "Properties of Matter",
+        "template_id": "u2_pizza_recipe",
+        "topic": "Changes in Matter",
         "input_type": "radio",
         "options": opts,
-        "scenario": f"A student tests a {item} in an electric circuit with a battery and bulb. The {bulb}.",
-        "question": f"How should the student classify the {item}?",
-        "hint": "Did the bulb turn on? If yes, electricity flows through it (conductor). If not, it blocks it (insulator).",
+        "scenario": f"A student helps prepare homemade pizza. Consider this specific step in the recipe: **{pick[0]}**.",
+        "question": "How is this step classified, and what is the scientific justification?",
+        "hint": "Did the step just change size/shape (physical), or did it create brand-new substances by baking/bubbling (chemical)?",
         "answer": ans,
-        "explanation": "Materials that allow current to flow are conductors; materials that block current are insulators.",
+        "explanation": f"{pick[0]} is a {pick[1]} because {pick[2]}.",
     }
 
 
-def u1_identifying_unknown_substance():
-    table = {
-        "Property": ["Color / State", "Hardness", "Solubility in Water", "Magnetism"],
-        "Result": ["White solid crystals", "Soft", "Dissolves completely", "Not attracted"],
+def u2_color_reaction_conservation():
+    student = random.choice(["Sophia", "Jamal", "Elena", "Aidan"])
+    mx = random.randint(110, 160)
+    my = random.randint(30, 60)
+    mtot = mx + my
+    cx = random.choice(["clear", "blue", "red"])
+    cy = random.choice(["colorless", "yellow", "white"])
+    cnew = "green" if (cx == "blue" and cy == "yellow") else "purple"
+
+    table_data = {
+        "Substance": ["Reactant X", "Reactant Y", "Combined Mixture XY"],
+        "Color": [cx, cy, cnew],
+        "Mass on Scale": [f"{mx} g", f"{my} g", f"{mtot} g"],
     }
-    correct = "Table salt or sugar, because both are soluble, non-magnetic white crystalline solids."
+    correct = "The Law of Conservation of Mass states that matter cannot be created or destroyed in a reaction."
     distractors = [
-        "Iron filings, because iron dissolves rapidly in water and forms clear liquid solutions.",
-        "Chalk powder, because chalk crystals dissolve completely in room-temperature water.",
-        "Copper wire clippings, because copper is a white crystalline solid that dissolves in water.",
+        "A physical change occurred, which automatically doubles the weight of liquids.",
+        "The reaction destroyed the yellow pigment atoms, converting them into extra mass.",
+        "Color changes only happen when extra air enters a solution.",
     ]
     opts, ans = helper_shuffle_options(correct, distractors)
     return {
-        "template_id": "u1_unknown_sub",
-        "topic": "Properties of Matter",
+        "template_id": "u2_color_conservation",
+        "topic": "Changes in Matter",
         "input_type": "radio",
         "options": opts,
-        "table": table,
-        "scenario": "A student records physical property tests for an unknown white powder found in the lab.",
-        "question": "Which substance could this mystery sample be based on the recorded data?",
-        "hint": "Which choice is white, crystalline, and dissolves in water without sticking to a magnet?",
+        "table": table_data,
+        "scenario": (
+            f"{student} measures the mass of Substance X ({mx} g) and Substance Y ({my} g). "
+            f"When mixed, an unexpected color change ({cnew}) appears, indicating a chemical reaction. "
+            f"She measures the final mass of Mixture XY and records {mtot} g."
+        ),
+        "question": f"Which fundamental law explains why the mass of X ({mx} g) plus Y ({my} g) equals the exact mass of XY ({mtot} g)?",
+        "hint": "Matter cannot be created or destroyed: Mass of Reactants = Mass of Products.",
         "answer": ans,
-        "explanation": "Table salt and sugar match all observed properties: white crystals, soluble in water, non-magnetic.",
+        "explanation": f"By the Law of Conservation of Mass, the total mass of reactants ({mx}g + {my}g = {mtot}g) equals the total mass of products.",
     }
 
 
-# ==============================================================================
-# 5. UNIT 2: CHANGES IN MATTER GENERATORS (VERIFIED ARITHMETIC)
-# ==============================================================================
-def u2_conservation_dissolving():
-    water_g = random.randint(120, 200)
-    sugar_g = random.randint(15, 35)
-    total = water_g + sugar_g
+def u2_open_beaker_gas_table():
+    student = random.choice(["Sophia", "Claire", "Jamal", "Noah"])
+    mw = random.randint(90, 130)
+    mz = random.randint(25, 45)
+    loss = random.randint(3, 7)
+    mfinal = (mw + mz) - loss
 
-    opts, ans = helper_shuffle_options(
-        f"Exactly {total} grams, because the dissolved sugar molecules still exist inside the solution.",
-        [
-            f"{water_g} grams, because the solid sugar was destroyed when it dissolved into clear liquid.",
-            f"{total + 10} grams, because stirring liquid vigorously adds atmospheric weight to the cup.",
-            f"{sugar_g} grams, because the water evaporated immediately as soon as sugar touched it.",
-        ],
-    )
+    table_data = {
+        "Substance": ["Substance W", "Substance Z", "Final Mixture WZ"],
+        "Mass on Scale": [f"{mw} g", f"{mz} g", f"{mfinal} g"],
+    }
+    correct = "The reaction produced a gas, which escaped into the atmosphere because the container was open."
+    distractors = [
+        "The chemical reaction destroyed atoms during the bubbling process.",
+        "The physical change caused particles to shrink in physical mass.",
+        "Liquid water absorbed the solid powder and made it weightless.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
     return {
-        "template_id": "u2_dissolving",
+        "template_id": "u2_open_table_gas",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "table": table_data,
+        "scenario": (
+            f"{student} combines Substance W ({mw} g) and Substance Z ({mz} g) in an open beaker. "
+            f"Vigorous bubbling occurs. When bubbling ceases, the final mass is {mfinal} g."
+        ),
+        "question": f"Why is the mass of W and Z combined ({mw + mz} g) greater than the mass of the final mixture ({mfinal} g)?",
+        "hint": "Where did the bubbles go? The beaker had no lid!",
+        "answer": ans,
+        "explanation": f"The {loss} grams of missing mass did not disappear; it escaped into the surrounding room air as gas bubbles.",
+    }
+
+
+def u2_weathered_tool_rusting():
+    tool = random.choice(["steel hammer", "iron garden shears", "steel trowel"])
+    correct = "Rust (iron oxide), which is a chemical change caused by iron reacting with oxygen and water."
+    distractors = [
+        "Paint chipping, which is a purely physical change of state.",
+        "Evaporation, which is a physical change of state.",
+        "Melted metal, which is an irreversible chemical change.",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u2_rusting_hammer",
+        "topic": "Changes in Matter",
+        "input_type": "radio",
+        "options": opts,
+        "scenario": f"A new {tool} with a shiny metallic head was accidentally left outside in the damp grass all spring. By June, the metal head is coated in a rough, reddish-brown crust.",
+        "question": "The weathered metal shows evidence of which process, and how is it classified?",
+        "hint": "Reddish-brown crust on iron left outside is rust. Is rusting physical or chemical?",
+        "answer": ans,
+        "explanation": "Rusting is a chemical change that occurs when iron chemically reacts with oxygen and water to form a brand-new compound (iron oxide).",
+    }
+
+
+def u2_chemical_evidence_multiselect():
+    pairs = [
+        ("Release of thermal heat or light", True),
+        ("Spontaneous temperature change without heating or cooling", True),
+        ("Formation of unexpected gas bubbles without boiling", True),
+        ("Permanent unexpected color change", True),
+        ("Formation of an insoluble solid precipitate", True),
+        ("Cutting a solid into smaller pieces", False),
+        ("Melting an ice cube into liquid water", False),
+        ("Dissolving sugar crystals into warm water", False),
+    ]
+    random.shuffle(pairs)
+    sample = pairs[:5]
+    if not any(p[1] for p in sample):
+        sample[0] = pairs[0]
+
+    opts = [p[0] for p in sample]
+    correct_opts = [p[0] for p in sample if p[1]]
+    return {
+        "template_id": "u2_chem_evidence_multi",
+        "topic": "Changes in Matter",
+        "input_type": "multiselect",
+        "options": opts,
+        "correct_answers": correct_opts,
+        "scenario": "A 5th-grade science class investigates how to distinguish between physical and chemical changes.",
+        "question": "Which observations provide direct evidence that a **chemical change** has occurred? (Choose all that apply)",
+        "hint": "Look for clues that indicate new substances are forming: heat, gas bubbles, new solids, or color shifts!",
+        "explanation": "Chemical changes form new substances and are indicated by heat/light release, gas production, precipitate formation, and unexpected color changes.",
+    }
+
+
+def u2_freezer_mass_conservation():
+    student = random.choice(["Keisha", "Liam", "Carlos", "Maya"])
+    m = random.choice([450, 680, 850, 920])
+    correct = f"Mass before freezer: {m} grams | Mass after freezer: {m} grams"
+    distractors = [
+        f"Mass before freezer: {m} grams | Mass after freezer: {m - 150} grams",
+        f"Mass before freezer: {m} grams | Mass after freezer: {m + 100} grams",
+        f"Mass before freezer: {m} grams | Mass after freezer: {m // 2} grams",
+    ]
+    opts, ans = helper_shuffle_options(correct, distractors)
+    return {
+        "template_id": "u2_freezer_mass",
         "topic": "Changes in Matter",
         "input_type": "radio",
         "options": opts,
         "scenario": (
-            f"A student places an empty cup on a scale, tares it to 0 g, and adds {water_g} g of warm water. "
-            f"She then adds {sugar_g} g of dry sugar crystals. The display confirms the starting contents "
-            f"equal {total} g ({water_g}g + {sugar_g}g). She stirs until every crystal dissolves completely."
+            f"{student} records the mass of a sealed bottle of liquid substance X ({m} grams). "
+            f"She places the sealed bottle into a freezer until it freezes completely solid. "
+            f"She removes the frozen bottle and measures its mass on the digital balance again."
         ),
-        "question": "What is the total mass of the clear sugar-water solution on the scale?",
-        "hint": f"Add the parts together: {water_g} g water + {sugar_g} g sugar. Dissolving does not destroy mass!",
+        "question": "Which set of data did the student most likely record after freezing?",
+        "hint": "Freezing is a physical change of state inside a sealed container. Does changing state destroy or add mass?",
         "answer": ans,
-        "explanation": f"Conservation of mass: {water_g} g water + {sugar_g} g sugar = {total} g total solution.",
-    }
-
-
-def u2_conservation_melting():
-    ice_g = random.randint(40, 80)
-    flask_g = random.randint(90, 120)
-    total = ice_g + flask_g
-
-    opts, ans = helper_shuffle_options(
-        f"Exactly {total} grams, because changing states of matter does not alter the amount of matter.",
-        [
-            f"{total - 10} grams, because liquid water is denser than ice and therefore loses weight on scales.",
-            f"{total + 15} grams, because thermal energy absorbed from sunlight adds measurable mass to liquids.",
-            f"{flask_g} grams, because all the solid ice molecules were destroyed during phase transition.",
-        ],
-    )
-    return {
-        "template_id": "u2_melting",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": (
-            f"A student places {ice_g} g of ice inside an empty glass flask ({flask_g} g) and inserts a rubber stopper. "
-            f"The digital scale displays a starting mass of {total} g ({flask_g}g flask + {ice_g}g ice). "
-            f"She leaves the flask in the sun until all the ice melts completely into liquid water."
-        ),
-        "question": "What will the scale read after the ice has melted inside the sealed flask?",
-        "hint": f"The flask remained sealed! Add {flask_g} g (flask) + {ice_g} g (melted water). Does phase change destroy mass?",
-        "answer": ans,
-        "explanation": f"Melting is a physical state change in a closed system. Mass remains identical at {total} g ({flask_g}g + {ice_g}g).",
+        "explanation": "Freezing is a physical change. In a closed container, matter cannot enter or leave, so the mass before freezing equals the mass after freezing.",
     }
 
 
@@ -1012,193 +1263,33 @@ def u2_closed_balloon_gas():
     }
 
 
-def u2_open_beaker_gas_loss():
-    liq = random.randint(150, 220)
-    tab = random.choice([4, 5, 6])
-    loss = random.choice([2, 3])
-    initial = liq + tab
-    final = initial - loss
+def u2_conservation_dissolving():
+    water_g = random.randint(120, 200)
+    sugar_g = random.randint(15, 35)
+    total = water_g + sugar_g
 
     opts, ans = helper_shuffle_options(
-        f"{loss} grams of carbon dioxide gas escaped into the room air because the beaker was open.",
+        f"Exactly {total} grams, because the dissolved sugar molecules still exist inside the solution.",
         [
-            "The antacid tablet was completely destroyed by water, eliminating its atoms from existence.",
-            "Liquid water evaporated instantly due to boiling heat generated by the tablet.",
-            "The digital scale lost calibration because vigorous gas bubbles vibrated the platform.",
+            f"{water_g} grams, because the solid sugar was destroyed when it dissolved into clear liquid.",
+            f"{total + 10} grams, because stirring liquid vigorously adds atmospheric weight to the cup.",
+            f"{sugar_g} grams, because the water evaporated immediately as soon as sugar touched it.",
         ],
     )
     return {
-        "template_id": "u2_open_beaker",
+        "template_id": "u2_dissolving",
         "topic": "Changes in Matter",
         "input_type": "radio",
         "options": opts,
         "scenario": (
-            f"A student places an open beaker containing {liq} g of water on a balance and sets a {tab} g antacid "
-            f"tablet beside it. The scale shows a combined starting mass of {initial} g ({liq}g + {tab}g). "
-            f"She drops the tablet into the water. Bubbles fizz vigorously as gas forms. "
-            f"Once bubbling completely stops, the balance reads {final} g."
+            f"A student places an empty cup on a scale, tares it to 0 g, and adds {water_g} g of warm water. "
+            f"She then adds {sugar_g} g of dry sugar crystals. The display confirms the starting contents "
+            f"equal {total} g ({water_g}g + {sugar_g}g). She stirs until every crystal dissolves completely."
         ),
-        "question": f"Why does the final reading show {loss} g less mass than the {initial} g starting mass?",
-        "hint": f"Subtract: {initial} g - {final} g = {loss} g. The container was open—where did the gas go?",
+        "question": "What is the total mass of the clear sugar-water solution on the scale?",
+        "hint": f"Add the parts together: {water_g} g water + {sugar_g} g sugar. Dissolving does not destroy mass!",
         "answer": ans,
-        "explanation": f"In an open system, the gas escapes into the room. The {loss} g lost ({initial}g - {final}g) is the mass of the escaped gas.",
-    }
-
-
-def u2_rusting_mass_gain():
-    pad = 20
-    gain = 2.5
-    table = {
-        "Stage": ["Day 1: Clean Dry Steel Wool", "Day 4: Rusted Steel Wool"],
-        "Observation": ["Shiny, flexible metallic fibers", "Reddish-brown, crumbly crust"],
-        "Mass on Balance": [f"{pad}.0 g", f"{pad + gain} g"],
-    }
-    opts, ans = helper_shuffle_options(
-        "Iron atoms chemically bonded with oxygen atoms from the air to form rust, adding mass.",
-        [
-            "The digital scale malfunctioned, because chemical changes are proven to always reduce mass.",
-            "Water moisture from the air soaked into the iron fibers and permanently turned into solid metal.",
-            "Matter was created out of nothing by the humid atmosphere surrounding the steel wool pad.",
-        ],
-    )
-    return {
-        "template_id": "u2_rusting",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "table": table,
-        "scenario": f"A student dampens clean steel wool ({pad}.0 g) and leaves it on a balance exposed to air for 4 days.",
-        "question": f"Why does the rusted steel wool weigh {gain} g MORE than the original steel wool?",
-        "hint": "Rust is iron oxide. Iron bonded with oxygen atoms taken from the air. What did that add to the solid?",
-        "answer": ans,
-        "explanation": "Iron combines chemically with oxygen from the air. The added mass comes from the bonded oxygen atoms.",
-    }
-
-
-def u2_precipitate_indicator():
-    opts, ans = helper_shuffle_options(
-        "A chemical change, because two clear liquids reacted to form an insoluble solid precipitate.",
-        [
-            "A physical change, because mixing two liquids together always produces a solid naturally.",
-            "A phase change, because the liquid mixture instantly froze into solid ice at room temperature.",
-            "No change occurred, because the two clear liquids simply separated like oil and vinegar.",
-        ],
-    )
-    return {
-        "template_id": "u2_precipitate",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": "A student mixes two clear, colorless solutions. Instantly, the mixture turns cloudy white, and solid white particles settle to the bottom.",
-        "question": "What kind of change took place, and what evidence supports this conclusion?",
-        "hint": "When two clear liquids form a brand-new solid that sinks, that solid is called a precipitate. That proves a chemical reaction happened!",
-        "answer": ans,
-        "explanation": "Forming an insoluble solid precipitate from two clear liquids is definitive proof of a chemical change.",
-    }
-
-
-def u2_temperature_change_rxn():
-    opts, ans = helper_shuffle_options(
-        "A chemical change that released heat energy (an exothermic reaction).",
-        [
-            "A physical change where water molecules were boiled away into invisible steam.",
-            "A chemical change that absorbed heat energy from the air (an endothermic reaction).",
-            "A measurement error caused by glass expanding against the thermometer bulb.",
-        ],
-    )
-    return {
-        "template_id": "u2_temp_rxn",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": "A student dissolves white pellets into room-temperature water (21°C). Without heating from outside, the temperature rises to 44°C.",
-        "question": "What type of change occurred in the beaker?",
-        "hint": "The water got hot all by itself! Releasing heat energy indicates an exothermic chemical change.",
-        "answer": ans,
-        "explanation": "Releasing thermal energy (getting hotter without external heating) is a clear sign of an exothermic chemical change.",
-    }
-
-
-def u2_reversibility_classification():
-    examples = [
-        (
-            "Melting an ice pop in a glass bowl",
-            "Physical change",
-            "easily reversible by placing the liquid back into a freezer",
-        ),
-        (
-            "Toasting a slice of white bread in a toaster",
-            "Chemical change",
-            "irreversible because heat created brand-new chemical compounds",
-        ),
-        (
-            "Dissolving lemonade powder into cold water",
-            "Physical change",
-            "reversible by boiling away the liquid water to recover the solid powder",
-        ),
-        (
-            "Burning a wooden matchstick",
-            "Chemical change",
-            "irreversible because wood reacted into smoke, ash, and gases",
-        ),
-    ]
-    item, kind, rev = random.choice(examples)
-    wrong_kind = "Chemical change" if kind == "Physical change" else "Physical change"
-    opts, ans = helper_shuffle_options(
-        f"{kind}, and it is {rev}.",
-        [
-            f"{wrong_kind}, and it is permanently irreversible under any conditions.",
-            f"{kind}, but all the mass in the original substance was destroyed.",
-            f"{wrong_kind}, because the substance changed temperature during the process.",
-        ],
-    )
-    return {
-        "template_id": "u2_reversibility",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": f"A student investigates whether everyday changes can be undone: **{item}**.",
-        "question": "How is this process classified, and is it reversible?",
-        "hint": "Can you freeze melted juice back into an ice pop? Can you un-toast bread?",
-        "answer": ans,
-        "explanation": f"{item} is a {kind} because it is {rev}.",
-    }
-
-
-def u2_factors_affecting_rate():
-    factors = [
-        (
-            "Crushed powdered sugar vs. a whole sugar cube of equal mass in 20°C water",
-            "The powder dissolves faster because smaller particles have more surface area touching water.",
-        ),
-        (
-            "Dropping an antacid tablet in 10°C water vs. 60°C water",
-            "The tablet in 60°C water reacts faster because hot molecules move faster and collide more often.",
-        ),
-        (
-            "Two cups of salt water: Cup A is stirred vigorously while Cup B sits still",
-            "Cup A dissolves faster because stirring circulates fresh water molecules around the salt.",
-        ),
-    ]
-    setup, correct_reason = random.choice(factors)
-    opts, ans = helper_shuffle_options(
-        correct_reason,
-        [
-            "Both will dissolve at the exact same rate because mass is always conserved in reactions.",
-            "The colder, un-stirred sample will dissolve faster because cold prevents liquid decay.",
-            "Neither sample will dissolve because solid particles cannot mix with liquid molecules.",
-        ],
-    )
-    return {
-        "template_id": "u2_rxn_rate",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": f"A student investigates what affects reaction rates: **{setup}**.",
-        "question": "What will the student observe, and which scientific explanation is correct?",
-        "hint": "Think about heat speeding up molecules, or crushing solids to give more surface area.",
-        "answer": ans,
-        "explanation": correct_reason,
+        "explanation": f"Conservation of mass: {water_g} g water + {sugar_g} g sugar = {total} g total solution.",
     }
 
 
@@ -1248,66 +1339,25 @@ def u2_multistep_mixture_separation():
     }
 
 
-def u2_candle_dual_change():
+def u2_precipitate_indicator():
     opts, ans = helper_shuffle_options(
-        "Wax melting is a physical change (state change), while wick and wax vapor burning is a chemical change.",
+        "A chemical change, because two clear liquids reacted to form an insoluble solid precipitate.",
         [
-            "Both wax melting and the burning flame are classified as purely physical changes.",
-            "Both wax melting and the burning flame are chemical changes that permanently destroy atoms.",
-            "The burning flame is a physical change because light and thermal heat have measurable mass.",
+            "A physical change, because mixing two liquids together always produces a solid naturally.",
+            "A phase change, because the liquid mixture instantly froze into solid ice at room temperature.",
+            "No change occurred, because the two clear liquids simply separated like oil and vinegar.",
         ],
     )
     return {
-        "template_id": "u2_candle",
+        "template_id": "u2_precipitate",
         "topic": "Changes in Matter",
         "input_type": "radio",
         "options": opts,
-        "scenario": "A student watches a burning candle. Solid wax melts into a clear liquid pool, while the wick burns and produces smoke.",
-        "question": "Which statement correctly distinguishes between the two processes occurring simultaneously?",
-        "hint": "Melting turns solid wax to liquid wax (can freeze back). Burning creates smoke and ash (cannot un-burn).",
+        "scenario": "A student mixes two clear, colorless solutions. Instantly, the mixture turns cloudy white, and solid white particles settle to the bottom.",
+        "question": "What kind of change took place, and what evidence supports this conclusion?",
+        "hint": "When two clear liquids form a brand-new solid that sinks, that solid is called a precipitate. That proves a chemical reaction happened!",
         "answer": ans,
-        "explanation": "Melting wax is a reversible physical change of state. Burning is a chemical change producing smoke and gases.",
-    }
-
-
-def u2_water_cycle_phase_changes():
-    changes = [
-        (
-            "Water vapor in the air cools and forms water droplets on a cold glass",
-            "Condensation",
-            "gas to liquid",
-        ),
-        (
-            "A shallow puddle of rainwater on a hot asphalt driveway disappears by noon",
-            "Evaporation",
-            "liquid to gas",
-        ),
-        (
-            "Liquid water inside ice cube trays placed in a freezer becomes solid ice",
-            "Freezing",
-            "liquid to solid",
-        ),
-    ]
-    scenario, term, trans = random.choice(changes)
-    wrong_term = "Condensation" if term == "Evaporation" else "Evaporation"
-    opts, ans = helper_shuffle_options(
-        f"{term}, which is a physical change from {trans}.",
-        [
-            f"{wrong_term}, which is a chemical change producing brand-new molecules.",
-            f"{term}, which is a chemical reaction that completely destroys water mass.",
-            "A permanent transformation that cannot be reversed by heating or cooling.",
-        ],
-    )
-    return {
-        "template_id": "u2_phase",
-        "topic": "Changes in Matter",
-        "input_type": "radio",
-        "options": opts,
-        "scenario": f"A student observes: **{scenario}**.",
-        "question": f"What scientific process occurred, and how is it classified?",
-        "hint": "Is water still water when it turns into vapor or droplets? Yes! So it's a physical state change.",
-        "answer": ans,
-        "explanation": f"{scenario} is {term} ({trans}), which is a physical change.",
+        "explanation": "Forming an insoluble solid precipitate from two clear liquids is definitive proof of a chemical change.",
     }
 
 
@@ -1452,35 +1502,38 @@ def gen_ecosystems_factory():
 
 
 # ==============================================================================
-# 7. MASTER GENERATOR REGISTRY
+# 7. MASTER GENERATOR REGISTRY (UNITS 1 - 6)
 # ==============================================================================
 GENERATORS = [
-    # Unit 1: Properties of Matter (12 Dedicated Functions)
+    # Unit 1: Properties of Matter
+    u1_molecule_model_advantages,
+    u1_molecule_alteration_compound,
+    u1_condensation_invisible_matter,
+    u1_hand_lens_capabilities,
+    u1_flask_particle_states,
+    u1_kinetic_thermal_motion,
+    u1_mineral_diagnostic_matrix,
+    u1_liquid_transfer_beakers,
+    u1_cooking_tool_conductivity,
     u1_measuring_tools,
-    u1_thermal_conductivity,
     u1_density_sink_float,
     u1_density_column_visual,
     u1_magnetism_metals,
     u1_solubility_saturation,
-    u1_particle_state_spacing,
     u1_gas_has_mass,
     u1_graduated_cylinder_volume,
     u1_pan_balance_comparison,
-    u1_electrical_conductors_insulators,
-    u1_identifying_unknown_substance,
-    # Unit 2: Changes in Matter (12 Dedicated Functions)
-    u2_conservation_dissolving,
-    u2_conservation_melting,
+    # Unit 2: Changes in Matter
+    u2_pizza_recipe_changes,
+    u2_color_reaction_conservation,
+    u2_open_beaker_gas_table,
+    u2_weathered_tool_rusting,
+    u2_chemical_evidence_multiselect,
+    u2_freezer_mass_conservation,
     u2_closed_balloon_gas,
-    u2_open_beaker_gas_loss,
-    u2_rusting_mass_gain,
-    u2_precipitate_indicator,
-    u2_temperature_change_rxn,
-    u2_reversibility_classification,
-    u2_factors_affecting_rate,
+    u2_conservation_dissolving,
     u2_multistep_mixture_separation,
-    u2_candle_dual_change,
-    u2_water_cycle_phase_changes,
+    u2_precipitate_indicator,
     # Other Curriculum Topics
     gen_patterns_in_space_factory,
     gen_earths_systems_factory,
@@ -1490,8 +1543,8 @@ GENERATORS = [
 
 TOPIC_TO_GENERATORS = {}
 for g in GENERATORS:
-    dummy = g()
-    TOPIC_TO_GENERATORS.setdefault(dummy["topic"], []).append(g)
+    sample_q = g()
+    TOPIC_TO_GENERATORS.setdefault(sample_q["topic"], []).append(g)
 
 ALL_TOPICS = sorted(list(TOPIC_TO_GENERATORS.keys()))
 init_db()
@@ -1531,8 +1584,7 @@ with st.sidebar:
             names = [s["name"] for s in existing_students]
             idx = (
                 names.index(st.session_state.student["name"])
-                if st.session_state.student
-                and st.session_state.student["name"] in names
+                if st.session_state.student and st.session_state.student["name"] in names
                 else 0
             )
             chosen_name = st.selectbox("Choose Student:", names, index=idx)
@@ -1578,13 +1630,10 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
-    unit1_and_2 = [
-        t for t in ["Properties of Matter", "Changes in Matter"] if t in ALL_TOPICS
-    ]
     selected_topics = st.multiselect(
         "🎯 Focus Units for Today:",
         ALL_TOPICS,
-        default=unit1_and_2 if unit1_and_2 else [ALL_TOPICS[0]],
+        default=ALL_TOPICS,
     )
 
     st.markdown("---")
@@ -1681,7 +1730,7 @@ if "table" in q:
 
 if "diagram" in q:
     img_buffer = generate_diagram(q["diagram"], q.get("diagram_params", {}))
-    st.image(img_buffer, width=460)
+    st.image(img_buffer, width=480)
 
 if "hint" in q and not st.session_state.answered:
     with st.expander("💡 Need a Teacher Hint? Click here before answering!"):
@@ -1710,23 +1759,6 @@ with st.form(key=form_key):
                 selected_boxes.append(opt)
         user_response = selected_boxes
 
-    elif input_mode == "multi_text":
-        user_response = {}
-        for field in q["blank_fields"]:
-            user_response[field["key"]] = st.text_input(
-                field["label"],
-                placeholder=field["placeholder"],
-                disabled=st.session_state.answered,
-                key=f"field_{field['key']}_{st.session_state.q_counter}",
-            )
-
-    else:
-        user_response = st.text_input(
-            "Fill in the blank:",
-            placeholder=q.get("placeholder", "Type your answer here..."),
-            disabled=st.session_state.answered,
-        )
-
     submit = st.form_submit_button(
         "Check Answer", disabled=st.session_state.answered
     )
@@ -1735,8 +1767,6 @@ with st.form(key=form_key):
         has_input = False
         if input_mode == "multiselect":
             has_input = len(user_response) > 0
-        elif input_mode == "multi_text":
-            has_input = all(str(v).strip() != "" for v in user_response.values())
         elif user_response is not None and str(user_response).strip() != "":
             has_input = True
 
@@ -1753,10 +1783,6 @@ with st.form(key=form_key):
             correct_ans_display = q.get("answer", "")
             if input_mode == "multiselect":
                 correct_ans_display = ", ".join(q.get("correct_answers", []))
-            elif input_mode == "multi_text":
-                correct_ans_display = " | ".join(
-                    [f"{k}: {v[0]}" for k, v in q.get("accepted_answers_dict", {}).items()]
-                )
 
             st.session_state.feedback = {
                 "type": "success" if is_correct else "error",
